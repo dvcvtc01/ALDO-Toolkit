@@ -34,39 +34,72 @@ Azure Local DisconnectedOps Toolkit for repeatable planning, acquisition validat
 /docker
 ```
 
-## Quickstart (Docker Compose Dev)
-1. Copy environment file:
+## 10-Minute Quickstart (Local Docker)
+1. Prerequisites:
+   - Docker Desktop running.
+   - Ports `3000`, `4000`, `5432`, and `6379` free.
+2. From repo root, create `.env`:
    - PowerShell: `Copy-Item .env.example .env`
-2. Start stack:
-   - `docker compose -f docker/docker-compose.dev.yml up --build`
-3. Open applications:
+3. Start services:
+   - `docker compose -f docker/docker-compose.dev.yml up -d --build`
+4. Confirm services and endpoints:
+   - `docker compose -f docker/docker-compose.dev.yml ps`
    - Web: `http://localhost:3000`
-   - API: `http://localhost:4000`
-   - OpenAPI docs: `http://localhost:4000/docs`
+   - API health: `http://localhost:4000/api/v1/health`
+   - API docs: `http://localhost:4000/docs`
+5. Bootstrap first Admin in UI:
+   - Open `http://localhost:3000`.
+   - Enter username/password.
+   - Tick `Bootstrap first Admin (only when no users exist)`.
+   - Select `Bootstrap Admin`.
 
-## Runner Examples
+## First Demo Workflow (Runner-First)
+1. Create demo artifact file on the runner host:
+```powershell
+New-Item -ItemType Directory -Path C:\aldo-demo\artifacts\payload -Force | Out-Null
+'ALDO-DEMO' | Set-Content -Path C:\aldo-demo\artifacts\payload\update.zip
+$hash = (Get-FileHash C:\aldo-demo\artifacts\payload\update.zip -Algorithm SHA256).Hash
+$hash
+```
+2. In **Plan**, create a project (minimum valid example):
+   - Name: `demo-runner-first`
+   - Environment: `air-gapped`
+   - Node count: `3`
+   - Deployment model: `physical`
+   - Domain: `corp.example.com`
+   - Identity provider: `adfs.corp.example.com`
+   - Management pool: `10.20.0.10-10.20.0.50`
+   - Ingress IP: `10.20.0.20`
+   - Deployment range: `10.30.0.0/24`
+   - Container range: `10.40.0.0/24`
+   - Ingress endpoint FQDN: `portal.corp.example.com`
+3. In **Acquire**:
+   - Root: `C:\aldo-demo\artifacts`
+   - Relative path: `payload\update.zip`
+   - Expected SHA256: paste `$hash`
+   - Tick all three prerequisite checkboxes (subscription, approval, RBAC).
+   - Select `Request Acquire Scan`.
+   - Copy generated runner command and execute it in PowerShell on the same host.
+4. In **Checks**:
+   - Select `Run Network Checks`.
+   - Copy generated runner command and execute it on the target execution host.
+5. In **Runs**:
+   - Verify runs exist for `acquire_scan` and `netcheck`.
+   - Open each run and confirm transcript + structured results are present.
+6. In **Exports**:
+   - Select `Generate Export`.
+   - Confirm `Runbook.md` and `validation-report.json` are generated.
+
+## Runner CLI Examples
 ```powershell
 .\runner\powershell\aldo-runner\aldo-runner.ps1 acquire scan --server http://localhost:4000 --project <project-id> --token <jwt> --root C:\artifacts --expectedPath payload\update.zip --expectedSha256 <sha256>
 .\runner\powershell\aldo-runner\aldo-runner.ps1 netcheck --server http://localhost:4000 --project <project-id> --token <jwt>
 ```
 
-## v0.2.0 Smoke Test (Runner-First)
-1. Start stack:
-   - `docker compose -f docker/docker-compose.dev.yml up --build`
-2. Open Web UI (`http://localhost:3000`) and bootstrap/login as Admin.
-3. Create a project in **Plan**.
-4. In **Acquire**, set artifact inputs and select **Request Acquire Scan**.
-5. Copy the generated command and run it on the host that can read the artifact folder.
-6. In **Checks**, select **Run Network Checks**, then run the generated runner command from the target host.
-7. Open **Runs** and verify:
-   - run entries exist for `acquire_scan` and `netcheck`
-   - status transitions to `completed`/`failed`
-   - transcript and structured results are visible in run detail
-8. Generate export in **Exports** and verify `Runbook.md` and `validation-report.json` are produced.
-
 Notes:
 - No Windows path needs to be mounted into Docker for acquisition validation.
-- Network check results reflect the runner execution host network, not the API container network.
+- Network check results reflect the runner host network, not the API container network.
+- Runner can create runs itself, but the recommended flow is requesting runs from UI and executing the generated command.
 
 ## OpenAPI Type Generation
 ```bash
