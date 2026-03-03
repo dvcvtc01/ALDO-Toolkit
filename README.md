@@ -16,6 +16,7 @@ Azure Local DisconnectedOps Toolkit for repeatable planning, acquisition validat
 - Project Wizard with network/capacity constraints.
 - Runner-first acquisition scan (`acquire_scan`) with artifact metadata + SHA256 evidence.
 - Runner-first network checks (`netcheck`) with DNS + TCP 443 reachability from execution host.
+- Runner-first Environment Checker execution (`envcheck`) with offline `modulePath` support.
 - PKI validation for disconnected operations requirements.
 - Export generation (`Runbook.md`, `validation-report.json`).
 - Runs audit trail with status, executed-by host/user/version, transcript, structured result JSON, and artifacts.
@@ -83,17 +84,22 @@ $hash
 4. In **Checks**:
    - Select `Run Network Checks`.
    - Copy generated runner command and execute it on the target execution host.
-5. In **Runs**:
-   - Verify runs exist for `acquire_scan` and `netcheck`.
+5. In **Checks** -> **Environment Checker**:
+   - Set module path to your staged offline Environment Checker module.
+   - Select `Run Environment Checker`.
+   - Copy generated runner command and execute it on the target execution host.
+6. In **Runs**:
+   - Verify runs exist for `acquire_scan`, `netcheck`, and `envcheck`.
    - Open each run and confirm transcript + structured results are present.
-6. In **Exports**:
+7. In **Exports**:
    - Select `Generate Export`.
-   - Confirm `Runbook.md` and `validation-report.json` are generated.
+   - Confirm `Runbook.md` and `validation-report.json` are generated with latest envcheck summary.
 
 ## Runner CLI Examples
 ```powershell
 .\runner\powershell\aldo-runner\aldo-runner.ps1 acquire scan --server http://localhost:4000 --project <project-id> --token <jwt> --root C:\artifacts --expectedPath payload\update.zip --expectedSha256 <sha256>
 .\runner\powershell\aldo-runner\aldo-runner.ps1 netcheck --server http://localhost:4000 --project <project-id> --token <jwt>
+.\runner\powershell\aldo-runner\aldo-runner.ps1 envcheck --server http://localhost:4000 --project <project-id> --token <jwt> --modulePath C:\staged\EnvironmentChecker --additionalArgs "<args>"
 ```
 
 Notes:

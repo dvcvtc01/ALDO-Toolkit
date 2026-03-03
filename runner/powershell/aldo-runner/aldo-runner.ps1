@@ -4,7 +4,7 @@ $ErrorActionPreference = "Stop"
 Import-Module (Join-Path $PSScriptRoot "Aldo.Runner.psd1") -Force
 
 if ($args.Count -lt 1) {
-    throw "Usage: aldo-runner acquire scan|netcheck --server <url> --project <id> --token <jwt> [options]"
+    throw "Usage: aldo-runner acquire scan|netcheck|envcheck --server <url> --project <id> --token <jwt> [options]"
 }
 
 $primary = ([string]$args[0]).ToLowerInvariant()
@@ -23,13 +23,17 @@ switch ($primary) {
         $command = "netcheck"
         $startIndex = 1
     }
+    "envcheck" {
+        $command = "envcheck"
+        $startIndex = 1
+    }
     "run" {
         # Backward-compatible alias from v0.1.0
         $command = "netcheck"
         $startIndex = 1
     }
     default {
-        throw "Unknown command '$primary'. Use 'acquire scan' or 'netcheck'."
+        throw "Unknown command '$primary'. Use 'acquire scan', 'netcheck', or 'envcheck'."
     }
 }
 
@@ -83,9 +87,14 @@ $expectedSha256 = if ($map.ContainsKey("expectedsha256")) { $map["expectedsha256
 $expectedPath = if ($map.ContainsKey("expectedpath")) { $map["expectedpath"] } elseif ($map.ContainsKey("expectedrelativepath")) { $map["expectedrelativepath"] } else { $null }
 $endpoints = if ($map.ContainsKey("endpoints")) { $map["endpoints"] } else { $null }
 $ingressIp = if ($map.ContainsKey("ingress-ip")) { $map["ingress-ip"] } elseif ($map.ContainsKey("ingressip")) { $map["ingressip"] } else { $null }
+$modulePath = if ($map.ContainsKey("modulepath")) { $map["modulepath"] } else { $null }
+$additionalArgs = if ($map.ContainsKey("additionalargs")) { $map["additionalargs"] } else { $null }
 
 if ($command -eq "acquire_scan" -and [string]::IsNullOrWhiteSpace($root)) {
     throw "--root is required for acquire scan"
+}
+if ($command -eq "envcheck" -and [string]::IsNullOrWhiteSpace($modulePath)) {
+    throw "--modulePath is required for envcheck"
 }
 
 Invoke-AldoRunner `
@@ -100,4 +109,6 @@ Invoke-AldoRunner `
     -Endpoints $endpoints `
     -Endpoint $endpointItems.ToArray() `
     -IngressIp $ingressIp `
+    -ModulePath $modulePath `
+    -AdditionalArgs $additionalArgs `
     -OutputPath $outputPath

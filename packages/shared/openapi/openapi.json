@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "ALDO Toolkit API",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "description": "Azure Local DisconnectedOps Toolkit API"
   },
   "components": {
@@ -601,7 +601,8 @@
                     "type": "string",
                     "enum": [
                       "acquire_scan",
-                      "netcheck"
+                      "netcheck",
+                      "envcheck"
                     ]
                   },
                   "requestJson": {
@@ -645,7 +646,8 @@
               "type": "string",
               "enum": [
                 "acquire_scan",
-                "netcheck"
+                "netcheck",
+                "envcheck"
               ]
             },
             "in": "query",
@@ -752,6 +754,10 @@
                     "items": {
                       "type": "object",
                       "properties": {
+                        "filename": {
+                          "type": "string",
+                          "minLength": 1
+                        },
                         "relativePath": {
                           "type": "string",
                           "minLength": 1
@@ -770,7 +776,7 @@
                         }
                       },
                       "required": [
-                        "relativePath",
+                        "filename",
                         "sha256",
                         "sizeBytes"
                       ],

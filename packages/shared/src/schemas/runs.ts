@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const runTypeSchema = z.enum(["acquire_scan", "netcheck"]);
+export const runTypeSchema = z.enum(["acquire_scan", "netcheck", "envcheck"]);
 export const runStatusSchema = z.enum(["requested", "in_progress", "completed", "failed"]);
 
 export const runCreateRequestSchema = z.object({
@@ -15,7 +15,8 @@ export const runExecutedBySchema = z.object({
 });
 
 export const runArtifactSchema = z.object({
-  relativePath: z.string().trim().min(1),
+  filename: z.string().trim().min(1),
+  relativePath: z.string().trim().min(1).optional(),
   sha256: z.string().trim().regex(/^[A-Fa-f0-9]{64}$/),
   sizeBytes: z.number().int().nonnegative(),
   modifiedAt: z.string().datetime().optional()

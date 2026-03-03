@@ -46,7 +46,7 @@ const statements = [
   `CREATE TABLE IF NOT EXISTS runs (
     id UUID PRIMARY KEY,
     project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    type TEXT NOT NULL CHECK (type IN ('acquire_scan', 'netcheck')),
+    type TEXT NOT NULL CHECK (type IN ('acquire_scan', 'netcheck', 'envcheck')),
     status TEXT NOT NULL CHECK (status IN ('requested', 'in_progress', 'completed', 'failed')),
     started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     finished_at TIMESTAMPTZ,
@@ -72,7 +72,21 @@ const statements = [
   `CREATE INDEX IF NOT EXISTS idx_validation_records_project ON validation_records(project_id, validation_type);`,
   `CREATE INDEX IF NOT EXISTS idx_run_logs_project ON run_logs(project_id);`,
   `CREATE INDEX IF NOT EXISTS idx_runs_project ON runs(project_id, created_at DESC);`,
-  `CREATE INDEX IF NOT EXISTS idx_runs_type_status ON runs(type, status);`
+  `CREATE INDEX IF NOT EXISTS idx_runs_type_status ON runs(type, status);`,
+  `DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.tables
+    WHERE table_schema = 'public'
+      AND table_name = 'runs'
+  ) THEN
+    ALTER TABLE runs DROP CONSTRAINT IF EXISTS runs_type_check;
+    ALTER TABLE runs
+      ADD CONSTRAINT runs_type_check
+      CHECK (type IN ('acquire_scan', 'netcheck', 'envcheck'));
+  END IF;
+END $$;`
 ];
 
 export const runMigrations = async (logger: FastifyBaseLogger): Promise<void> => {

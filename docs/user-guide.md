@@ -41,17 +41,27 @@
 4. Copy and execute the runner command from the execution host.
 5. Review latest network check output in **Checks** or full details in **Runs**.
 
-## 5. Export Runbook and Report
+## 5. Run Environment Checker (Offline)
+1. Stage the Environment Checker module folder on the execution host (offline source).
+2. Open **Checks** and go to **Environment Checker**.
+3. Provide `modulePath` and optional additional args.
+4. Select **Run Environment Checker** to create a run request.
+5. Copy and execute the runner command on the execution host.
+6. Review summary (`Green`/`Amber`/`Red`) and top failures in **Checks** or **Runs**.
+
+## 6. Export Runbook and Report
 1. Open **Exports**.
 2. Select **Generate Export**.
 3. Toolkit writes and records:
    - `Runbook.md`
    - `validation-report.json`
+   - latest envcheck summary + artifact metadata
 
-## 6. Runner Commands
+## 7. Runner Commands
 Use runner from workstation/staging host:
 ```powershell
 .\runner\powershell\aldo-runner\aldo-runner.ps1 acquire scan --server http://localhost:4000 --project <project-id> --token <jwt> --root C:\artifacts --expectedPath payload\update.zip --expectedSha256 <sha256>
 .\runner\powershell\aldo-runner\aldo-runner.ps1 netcheck --server http://localhost:4000 --project <project-id> --token <jwt>
+.\runner\powershell\aldo-runner\aldo-runner.ps1 envcheck --server http://localhost:4000 --project <project-id> --token <jwt> --modulePath C:\staged\EnvironmentChecker --additionalArgs "<args>"
 ```
 Commands post structured evidence, transcript, execution host details, and result JSON to **Runs**.

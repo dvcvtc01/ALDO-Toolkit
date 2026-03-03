@@ -4,11 +4,11 @@
 ALDO Toolkit is an open-source, self-hosted planner/validator/evidence system for Azure Local disconnected operations. It does not replace Microsoft control-plane actions. It reduces operator error by wrapping documented flows and preserving deterministic evidence.
 
 ## System Components
-- `apps/web` (Next.js + Fluent UI): wizard-led interface for planning, requesting runner-based acquisition/network runs, PKI validation submission, exports, and run evidence views.
+- `apps/web` (Next.js + Fluent UI): wizard-led interface for planning, requesting runner-based acquisition/network/envcheck runs, PKI validation submission, exports, and run evidence views.
 - `apps/api` (Fastify + OpenAPI): auth, RBAC, project CRUD, validators, exports, run request lifecycle, and run evidence ingestion endpoints.
 - `apps/worker` (BullMQ): async processing skeleton for follow-on evidence and OperationsModule workflows.
 - `packages/shared` (zod + validators): shared data contracts and core validation logic.
-- `runner/powershell/aldo-runner`: workstation/staging-host execution runner for acquisition folder scanning, DNS/TCP checks, and transcript posting.
+- `runner/powershell/aldo-runner`: workstation/staging-host execution runner for acquisition folder scanning, DNS/TCP checks, Environment Checker execution, and transcript posting.
 - Postgres: source of truth for users, projects, validation records, exports, and runs.
 - Redis: queue broker for worker jobs.
 - Local object storage volume: stores generated artifacts and evidence files.
@@ -21,7 +21,7 @@ ALDO Toolkit is an open-source, self-hosted planner/validator/evidence system fo
 5. Identity model supports role-based access in-tool and references AD groups + AD FS operational model externally.
 6. Update flow is represented in runbook/checklists (stage zip, import OperationsModule, upload package, wait for staging, export BitLocker keys).
 7. Log evidence supports direct/indirect/fallback modes with deterministic support-bundle manifest hashing.
-8. Environment checker is integrated as runner placeholder for PowerShell execution expansion.
+8. Environment checker is executed by runner (`envcheck`) with offline module path support and auditable result ingestion.
 
 ## API and Data Model
 - `users`: local auth records (`argon2id` password hash), role (`Admin|Operator|Viewer`).
@@ -29,7 +29,7 @@ ALDO Toolkit is an open-source, self-hosted planner/validator/evidence system fo
 - `validation_records`: immutable validation inputs/results with timestamps.
 - `acquisition_records`: legacy acquisition checklist payload history from initial MVP path.
 - `exports`: generated `Runbook.md` and `validation-report.json`.
-- `runs`: requested and executed runs (`acquire_scan`, `netcheck`) with status, transcript, structured result JSON, execution host metadata, and artifact metadata.
+- `runs`: requested and executed runs (`acquire_scan`, `netcheck`, `envcheck`) with status, transcript, structured result JSON, execution host metadata, and artifact metadata.
 - `run_logs`: legacy support-bundle payload table from initial runner endpoint.
 
 ## Auditability
@@ -50,4 +50,5 @@ ALDO Toolkit is an open-source, self-hosted planner/validator/evidence system fo
 - Runner authenticates with a user-provided API bearer token.
 - UI run requests generate run IDs; runner commands can target an existing run ID (`--run`) or create a run request when omitted.
 - Acquisition and network host-dependent checks are executed from runner hosts, not from API container filesystem/network context.
+- Environment Checker module binaries are staged offline by operators; runner discovers/invokes checker commands from the provided module path.
 - Object storage backend is local filesystem volume for MVP; MinIO integration is future work.

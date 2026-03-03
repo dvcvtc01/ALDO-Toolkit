@@ -525,9 +525,14 @@ export const routes: FastifyPluginCallback = (app, _opts, done) => {
       }
 
       const validations = await listValidationRecords(projectId);
+      const envcheckRuns = await listRunsByProject(projectId, { type: "envcheck" });
+      const latestEnvcheckRun =
+        envcheckRuns.find((run) => run.status === "completed" || run.status === "failed") ??
+        envcheckRuns[0] ??
+        null;
       const generatedAt = new Date().toISOString();
-      const runbook = buildRunbookMarkdown(project, validations, generatedAt);
-      const report = buildValidationReport(project, validations, generatedAt);
+      const runbook = buildRunbookMarkdown(project, validations, generatedAt, latestEnvcheckRun);
+      const report = buildValidationReport(project, validations, generatedAt, latestEnvcheckRun);
       const exportId = randomUUID();
 
       const exportDir = await ensureProjectSubdir(projectId, "exports");
@@ -655,7 +660,11 @@ export const routes: FastifyPluginCallback = (app, _opts, done) => {
 
       await insertValidationRecord(
         existing.projectId,
-        existing.type === "acquire_scan" ? "runner_acquire_scan" : "runner_netcheck",
+        existing.type === "acquire_scan"
+          ? "runner_acquire_scan"
+          : existing.type === "netcheck"
+            ? "runner_netcheck"
+            : "runner_envcheck",
         request.user.userId,
         {
           runId,

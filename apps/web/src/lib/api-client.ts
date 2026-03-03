@@ -57,7 +57,7 @@ export type ProjectPayload = {
   notes?: string;
 };
 
-export type RunType = "acquire_scan" | "netcheck";
+export type RunType = "acquire_scan" | "netcheck" | "envcheck";
 export type RunStatus = "requested" | "in_progress" | "completed" | "failed";
 
 export type RunRecord = {
@@ -76,7 +76,8 @@ export type RunRecord = {
   transcriptLines: Array<Record<string, unknown>>;
   resultJson: unknown;
   artifacts: Array<{
-    relativePath: string;
+    filename: string;
+    relativePath?: string | undefined;
     sha256: string;
     sizeBytes: number;
     modifiedAt?: string | undefined;

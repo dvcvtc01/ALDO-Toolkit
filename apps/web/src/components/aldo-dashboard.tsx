@@ -70,6 +70,10 @@ export const AldoDashboard = () => {
   const [networkEndpoints, setNetworkEndpoints] = useState("");
   const [networkRunnerCommand, setNetworkRunnerCommand] = useState("");
   const [networkLatestRun, setNetworkLatestRun] = useState<RunRecord | null>(null);
+  const [envcheckModulePath, setEnvcheckModulePath] = useState("C:\\staged\\EnvironmentChecker");
+  const [envcheckAdditionalArgs, setEnvcheckAdditionalArgs] = useState("");
+  const [envcheckRunnerCommand, setEnvcheckRunnerCommand] = useState("");
+  const [envcheckLatestRun, setEnvcheckLatestRun] = useState<RunRecord | null>(null);
 
   const [pkiFile, setPkiFile] = useState<File | null>(null);
   const [pkiPassphrase, setPkiPassphrase] = useState("");
@@ -110,6 +114,57 @@ export const AldoDashboard = () => {
     if (health === "Green") return "tag-green";
     if (health === "Amber") return "tag-amber";
     return "tag-red";
+  };
+
+  const envcheckSummaryFromRun = (
+    run: RunRecord | null
+  ): {
+    overall: "Green" | "Amber" | "Red";
+    topFailures: string[];
+  } => {
+    if (!run || !run.resultJson || typeof run.resultJson !== "object") {
+      return {
+        overall: "Amber",
+        topFailures: []
+      };
+    }
+
+    const result = run.resultJson as Record<string, unknown>;
+    const summary =
+      typeof result.summary === "object" && result.summary !== null
+        ? (result.summary as Record<string, unknown>)
+        : {};
+
+    const overallRaw = typeof summary.overall === "string" ? summary.overall : "";
+    const overall = (() => {
+      const normalized = overallRaw.trim().toLowerCase();
+      if (normalized === "green" || normalized === "pass" || normalized === "passed") return "Green";
+      if (normalized === "red" || normalized === "fail" || normalized === "failed") return "Red";
+      return "Amber";
+    })();
+
+    const topFailures = Array.isArray(summary.topFailures)
+      ? summary.topFailures
+          .map((entry) => {
+            if (typeof entry === "string") {
+              return entry;
+            }
+            if (typeof entry === "object" && entry !== null) {
+              const record = entry as Record<string, unknown>;
+              const category = typeof record.category === "string" ? record.category : "General";
+              const name = typeof record.name === "string" ? record.name : "check";
+              const message = typeof record.message === "string" ? record.message : "failed";
+              return `${category}/${name}: ${message}`;
+            }
+            return null;
+          })
+          .filter((entry): entry is string => Boolean(entry))
+      : [];
+
+    return {
+      overall,
+      topFailures
+    };
   };
 
   const applySession = (sessionToken: string, sessionUser: AuthUser): void => {
@@ -278,6 +333,22 @@ export const AldoDashboard = () => {
     return command.join(" ");
   };
 
+  const buildEnvcheckRunnerCommand = (runId: string): string => {
+    const command: string[] = [
+      "aldo-runner envcheck",
+      `--server ${apiBaseUrl}`,
+      `--project ${selectedProjectId ?? "<project-id>"}`,
+      `--run ${runId}`,
+      "--token <jwt>",
+      `--modulePath ${quoteArg(envcheckModulePath || "<module-path>")}`
+    ];
+
+    if (envcheckAdditionalArgs.trim().length > 0) {
+      command.push(`--additionalArgs ${quoteArg(envcheckAdditionalArgs.trim())}`);
+    }
+    return command.join(" ");
+  };
+
   const downloadWizardJson = (): void => {
     const blob = new Blob([JSON.stringify(wizard, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -296,14 +367,16 @@ export const AldoDashboard = () => {
       preserveSelected?: boolean;
     } = {}
   ): Promise<void> => {
-    const [acquireRuns, networkRuns, filteredRuns] = await Promise.all([
+    const [acquireRuns, networkRuns, envcheckRuns, filteredRuns] = await Promise.all([
       runsApi.list(authToken, projectId, { type: "acquire_scan" }),
       runsApi.list(authToken, projectId, { type: "netcheck" }),
+      runsApi.list(authToken, projectId, { type: "envcheck" }),
       runsApi.list(authToken, projectId, options.runFilters)
     ]);
 
     setAcquireLatestRun(acquireRuns[0] ?? null);
     setNetworkLatestRun(networkRuns[0] ?? null);
+    setEnvcheckLatestRun(envcheckRuns[0] ?? null);
     setRunsList(filteredRuns);
 
     if (filteredRuns.length === 0) {
@@ -397,6 +470,41 @@ export const AldoDashboard = () => {
     }
   };
 
+  const requestEnvcheckRun = async (): Promise<void> => {
+    if (!token || !selectedProjectId) return;
+    if (envcheckModulePath.trim().length === 0) {
+      setStatusMessage("Environment Checker module path is required.");
+      return;
+    }
+
+    setBusy(true);
+    setStatusMessage("");
+    try {
+      const run = await runsApi.create(token, selectedProjectId, {
+        type: "envcheck",
+        requestJson: {
+          modulePath: envcheckModulePath,
+          additionalArgs: envcheckAdditionalArgs || undefined
+        }
+      });
+
+      const command = buildEnvcheckRunnerCommand(run.id);
+      setEnvcheckRunnerCommand(command);
+      await refreshRunSnapshots(token, selectedProjectId, {
+        runFilters: {
+          ...(runFilterType !== "all" ? { type: runFilterType } : {}),
+          ...(runFilterStatus !== "all" ? { status: runFilterStatus } : {})
+        },
+        preserveSelected: true
+      });
+      setStatusMessage("Environment Checker run requested. Execute the runner command on the target host.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to request environment checker run.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const loadRuns = async (): Promise<void> => {
     if (!token || !selectedProjectId) return;
     setBusy(true);
@@ -468,6 +576,7 @@ export const AldoDashboard = () => {
     if (!token || !selectedProjectId) {
       setAcquireLatestRun(null);
       setNetworkLatestRun(null);
+      setEnvcheckLatestRun(null);
       setRunsList([]);
       setSelectedRunId(null);
       setSelectedRunDetail(null);
@@ -949,7 +1058,8 @@ export const AldoDashboard = () => {
 
         {activeNav === "Checks" && (
           <section className="panel">
-            <h2>Network Checks</h2>
+            <h2>Checks</h2>
+            <h3>Network Checks</h3>
             <p>Runner performs DNS and TCP 443 checks from the execution host network.</p>
             <Field label="Override Endpoints (one per line, optional)">
               <Textarea
@@ -980,6 +1090,65 @@ export const AldoDashboard = () => {
                 <pre className="monospace" style={{ whiteSpace: "pre-wrap" }}>
                   {JSON.stringify(networkLatestRun.resultJson, null, 2)}
                 </pre>
+              </div>
+            )}
+
+            <hr style={{ margin: "18px 0" }} />
+
+            <h3>Environment Checker</h3>
+            <p>Runs Microsoft Environment Checker from the execution host using an offline-staged module path.</p>
+            <div className="grid-two">
+              <Field label="Module Path (offline staged)">
+                <Input
+                  value={envcheckModulePath}
+                  onChange={(_, data) => setEnvcheckModulePath(data.value)}
+                />
+              </Field>
+              <Field label="Additional Args (optional)">
+                <Input
+                  value={envcheckAdditionalArgs}
+                  onChange={(_, data) => setEnvcheckAdditionalArgs(data.value)}
+                />
+              </Field>
+            </div>
+            <Button appearance="primary" onClick={() => void requestEnvcheckRun()}>
+              Run Environment Checker
+            </Button>
+            {envcheckRunnerCommand && (
+              <div style={{ marginTop: 12 }}>
+                <Field label="Runner Command">
+                  <Textarea readOnly rows={3} value={envcheckRunnerCommand} />
+                </Field>
+                <Button icon={<Copy24Regular />} onClick={() => void copyRunnerCommand(envcheckRunnerCommand)}>
+                  Copy Command
+                </Button>
+              </div>
+            )}
+            {envcheckLatestRun && (
+              <div style={{ marginTop: 12 }}>
+                {(() => {
+                  const summary = envcheckSummaryFromRun(envcheckLatestRun);
+                  return (
+                    <>
+                      <p>
+                        Latest envcheck: {new Date(envcheckLatestRun.startedAt).toLocaleString()} (
+                        {envcheckLatestRun.status})
+                      </p>
+                      <p className={summary.overall === "Green" ? "tag-green" : summary.overall === "Red" ? "tag-red" : "tag-amber"}>
+                        Summary: {summary.overall}
+                      </p>
+                      {summary.topFailures.length > 0 && (
+                        <ul className="validation-list">
+                          {summary.topFailures.slice(0, 5).map((failure, index) => (
+                            <li key={`${failure}-${index}`} className="tag-red">
+                              {failure}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
             )}
           </section>
@@ -1013,6 +1182,7 @@ export const AldoDashboard = () => {
                   <option value="all">all</option>
                   <option value="acquire_scan">acquire_scan</option>
                   <option value="netcheck">netcheck</option>
+                  <option value="envcheck">envcheck</option>
                 </Select>
               </Field>
               <Field label="Status Filter">
@@ -1084,6 +1254,11 @@ export const AldoDashboard = () => {
                     ? `${selectedRunDetail.executedBy.username} @ ${selectedRunDetail.executedBy.hostname} (${selectedRunDetail.executedBy.runnerVersion})`
                     : "n/a"}
                 </p>
+                {selectedRunDetail.type === "envcheck" && (
+                  <p className={envcheckSummaryFromRun(selectedRunDetail).overall === "Green" ? "tag-green" : envcheckSummaryFromRun(selectedRunDetail).overall === "Red" ? "tag-red" : "tag-amber"}>
+                    Envcheck Summary: {envcheckSummaryFromRun(selectedRunDetail).overall}
+                  </p>
+                )}
                 <Field label="Transcript">
                   <Textarea
                     readOnly

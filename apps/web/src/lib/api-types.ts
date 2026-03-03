@@ -573,7 +573,7 @@ export interface paths {
         get: {
             parameters: {
                 query?: {
-                    type?: "acquire_scan" | "netcheck";
+                    type?: "acquire_scan" | "netcheck" | "envcheck";
                     status?: "requested" | "in_progress" | "completed" | "failed";
                 };
                 header?: never;
@@ -607,7 +607,7 @@ export interface paths {
                 content: {
                     "application/json": {
                         /** @enum {string} */
-                        type: "acquire_scan" | "netcheck";
+                        type: "acquire_scan" | "netcheck" | "envcheck";
                         /** @default {} */
                         requestJson?: {
                             [key: string]: unknown;
@@ -671,7 +671,8 @@ export interface paths {
                         resultJson?: unknown;
                         /** @default [] */
                         artifacts?: {
-                            relativePath: string;
+                            filename: string;
+                            relativePath?: string;
                             sha256: string;
                             sizeBytes: number;
                             /** Format: date-time */

@@ -39,7 +39,8 @@ export type DbRun = {
   transcriptLines: Array<Record<string, unknown>>;
   resultJson: unknown;
   artifacts: Array<{
-    relativePath: string;
+    filename: string;
+    relativePath?: string | undefined;
     sha256: string;
     sizeBytes: number;
     modifiedAt?: string | undefined;
@@ -68,6 +69,48 @@ const mapProject = (row: Record<string, unknown>): DbProject => ({
   updatedAt: new Date(String(row.updated_at)).toISOString()
 });
 
+const mapRunArtifacts = (value: unknown): DbRun["artifacts"] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const artifacts: DbRun["artifacts"] = [];
+  for (const artifact of value) {
+    if (typeof artifact !== "object" || artifact === null) {
+      continue;
+    }
+
+    const record = artifact as Record<string, unknown>;
+    if (typeof record.sha256 !== "string") {
+      continue;
+    }
+
+    const filename =
+      typeof record.filename === "string"
+        ? record.filename
+        : typeof record.relativePath === "string"
+          ? record.relativePath.split("/").at(-1) ?? "artifact"
+          : "artifact";
+
+    const mappedArtifact: DbRun["artifacts"][number] = {
+      filename,
+      sha256: record.sha256,
+      sizeBytes: typeof record.sizeBytes === "number" ? Math.max(0, Math.floor(record.sizeBytes)) : 0
+    };
+
+    if (typeof record.relativePath === "string") {
+      mappedArtifact.relativePath = record.relativePath;
+    }
+    if (typeof record.modifiedAt === "string") {
+      mappedArtifact.modifiedAt = record.modifiedAt;
+    }
+
+    artifacts.push(mappedArtifact);
+  }
+
+  return artifacts;
+};
+
 const mapRun = (row: Record<string, unknown>): DbRun => ({
   id: String(row.id),
   projectId: String(row.project_id),
@@ -91,14 +134,7 @@ const mapRun = (row: Record<string, unknown>): DbRun => ({
     ? (row.transcript_lines as Array<Record<string, unknown>>)
     : [],
   resultJson: row.result_json ?? null,
-  artifacts: Array.isArray(row.artifacts)
-    ? (row.artifacts as Array<{
-        relativePath: string;
-        sha256: string;
-        sizeBytes: number;
-        modifiedAt?: string | undefined;
-      }>)
-    : [],
+  artifacts: mapRunArtifacts(row.artifacts),
   requestJson:
     typeof row.request_json === "object" && row.request_json
       ? (row.request_json as Record<string, unknown>)
@@ -425,7 +461,8 @@ export const submitRunEvidence = async (
     transcriptLines: Array<Record<string, unknown>>;
     resultJson: unknown;
     artifacts: Array<{
-      relativePath: string;
+      filename: string;
+      relativePath?: string | undefined;
       sha256: string;
       sizeBytes: number;
       modifiedAt?: string | undefined;
