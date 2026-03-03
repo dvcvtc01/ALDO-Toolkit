@@ -27,6 +27,27 @@ export const wizardSchema = z.object({
 });
 
 export type WizardProjectInput = z.infer<typeof wizardSchema>;
+export type WizardFieldKey =
+  | "name"
+  | "description"
+  | "environmentType"
+  | "deploymentModel"
+  | "domainName"
+  | "dnsServers"
+  | "nodeCountTarget"
+  | "managementIpPool"
+  | "ingressIp"
+  | "deploymentRange"
+  | "containerNetworkRange"
+  | "identityProviderHost"
+  | "ingressEndpoints"
+  | "notes";
+
+export type WizardValidationResult = {
+  valid: boolean;
+  summary: string[];
+  fieldErrors: Partial<Record<WizardFieldKey, string>>;
+};
 
 export const defaultWizardInput: WizardProjectInput = {
   name: "",
@@ -45,17 +66,90 @@ export const defaultWizardInput: WizardProjectInput = {
   notes: ""
 };
 
-export const validateWizardInline = (input: WizardProjectInput): string[] => {
+const getTopLevelField = (path: Array<string | number>): WizardFieldKey | null => {
+  const top = path[0];
+  if (typeof top !== "string") {
+    return null;
+  }
+
+  const directFields: WizardFieldKey[] = [
+    "name",
+    "description",
+    "environmentType",
+    "deploymentModel",
+    "domainName",
+    "dnsServers",
+    "nodeCountTarget",
+    "managementIpPool",
+    "ingressIp",
+    "deploymentRange",
+    "containerNetworkRange",
+    "identityProviderHost",
+    "ingressEndpoints",
+    "notes"
+  ];
+
+  return directFields.includes(top as WizardFieldKey) ? (top as WizardFieldKey) : null;
+};
+
+const addIssue = (
+  summary: string[],
+  fieldErrors: Partial<Record<WizardFieldKey, string>>,
+  message: string,
+  field: WizardFieldKey | null
+): void => {
+  if (!summary.includes(message)) {
+    summary.push(message);
+  }
+  if (field && !fieldErrors[field]) {
+    fieldErrors[field] = message;
+  }
+};
+
+export const validateWizard = (input: WizardProjectInput): WizardValidationResult => {
   const parsed = wizardSchema.safeParse(input);
-  const issues = parsed.success ? [] : parsed.error.issues.map((issue) => issue.message);
+  const summary: string[] = [];
+  const fieldErrors: Partial<Record<WizardFieldKey, string>> = {};
+
+  if (!parsed.success) {
+    for (const issue of parsed.error.issues) {
+      const field = getTopLevelField(issue.path);
+      addIssue(summary, fieldErrors, issue.message, field);
+    }
+  }
 
   if (input.deploymentModel !== "physical") {
-    issues.push("Virtual deployment is unsupported. Use physical machines only.");
+    addIssue(
+      summary,
+      fieldErrors,
+      "Disconnected operations management instance must be deployed on physical machines.",
+      "deploymentModel"
+    );
   }
 
   if (input.nodeCountTarget < 3 || input.nodeCountTarget > 16) {
-    issues.push("Management instance requires 3 to 16 nodes.");
+    addIssue(
+      summary,
+      fieldErrors,
+      "Management instance requires between 3 and 16 physical machines.",
+      "nodeCountTarget"
+    );
   }
 
-  return issues;
+  if (input.ingressEndpoints.length === 0) {
+    addIssue(
+      summary,
+      fieldErrors,
+      "At least one ingress endpoint is required for DNS validation.",
+      "ingressEndpoints"
+    );
+  }
+
+  return {
+    valid: summary.length === 0,
+    summary,
+    fieldErrors
+  };
 };
+
+export const validateWizardInline = (input: WizardProjectInput): string[] => validateWizard(input).summary;

@@ -43,6 +43,23 @@ const statements = [
     validation_report JSONB NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   );`,
+  `CREATE TABLE IF NOT EXISTS runs (
+    id UUID PRIMARY KEY,
+    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    type TEXT NOT NULL CHECK (type IN ('acquire_scan', 'netcheck')),
+    status TEXT NOT NULL CHECK (status IN ('requested', 'in_progress', 'completed', 'failed')),
+    started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    finished_at TIMESTAMPTZ,
+    executed_by JSONB,
+    transcript_text TEXT,
+    transcript_lines JSONB NOT NULL DEFAULT '[]'::jsonb,
+    result_json JSONB,
+    artifacts JSONB NOT NULL DEFAULT '[]'::jsonb,
+    request_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_by UUID REFERENCES users(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );`,
   `CREATE TABLE IF NOT EXISTS run_logs (
     id UUID PRIMARY KEY,
     project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -53,7 +70,9 @@ const statements = [
   );`,
   `CREATE INDEX IF NOT EXISTS idx_projects_owner ON projects(owner_user_id);`,
   `CREATE INDEX IF NOT EXISTS idx_validation_records_project ON validation_records(project_id, validation_type);`,
-  `CREATE INDEX IF NOT EXISTS idx_run_logs_project ON run_logs(project_id);`
+  `CREATE INDEX IF NOT EXISTS idx_run_logs_project ON run_logs(project_id);`,
+  `CREATE INDEX IF NOT EXISTS idx_runs_project ON runs(project_id, created_at DESC);`,
+  `CREATE INDEX IF NOT EXISTS idx_runs_type_status ON runs(type, status);`
 ];
 
 export const runMigrations = async (logger: FastifyBaseLogger): Promise<void> => {

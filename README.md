@@ -14,11 +14,11 @@ Azure Local DisconnectedOps Toolkit for repeatable planning, acquisition validat
 ## MVP Features
 - Local auth (`argon2id`) + RBAC (`Admin`, `Operator`, `Viewer`).
 - Project Wizard with network/capacity constraints.
-- Acquisition checklist + artifact SHA256 verification.
-- Network checks (DNS + TCP 443 reachability from execution host).
+- Runner-first acquisition scan (`acquire_scan`) with artifact metadata + SHA256 evidence.
+- Runner-first network checks (`netcheck`) with DNS + TCP 443 reachability from execution host.
 - PKI validation for disconnected operations requirements.
 - Export generation (`Runbook.md`, `validation-report.json`).
-- PowerShell runner skeleton for evidence collection and transcript upload.
+- Runs audit trail with status, executed-by host/user/version, transcript, structured result JSON, and artifacts.
 
 ## Repository Layout
 ```
@@ -44,10 +44,29 @@ Azure Local DisconnectedOps Toolkit for repeatable planning, acquisition validat
    - API: `http://localhost:4000`
    - OpenAPI docs: `http://localhost:4000/docs`
 
-## Runner Example
+## Runner Examples
 ```powershell
-.\runner\powershell\aldo-runner\aldo-runner.ps1 run --server http://localhost:4000 --project <project-id> --token <jwt> --endpoint portal.corp.example.com --ingress-ip 10.20.0.20
+.\runner\powershell\aldo-runner\aldo-runner.ps1 acquire scan --server http://localhost:4000 --project <project-id> --token <jwt> --root C:\artifacts --expectedPath payload\update.zip --expectedSha256 <sha256>
+.\runner\powershell\aldo-runner\aldo-runner.ps1 netcheck --server http://localhost:4000 --project <project-id> --token <jwt>
 ```
+
+## v0.2.0 Smoke Test (Runner-First)
+1. Start stack:
+   - `docker compose -f docker/docker-compose.dev.yml up --build`
+2. Open Web UI (`http://localhost:3000`) and bootstrap/login as Admin.
+3. Create a project in **Plan**.
+4. In **Acquire**, set artifact inputs and select **Request Acquire Scan**.
+5. Copy the generated command and run it on the host that can read the artifact folder.
+6. In **Checks**, select **Run Network Checks**, then run the generated runner command from the target host.
+7. Open **Runs** and verify:
+   - run entries exist for `acquire_scan` and `netcheck`
+   - status transitions to `completed`/`failed`
+   - transcript and structured results are visible in run detail
+8. Generate export in **Exports** and verify `Runbook.md` and `validation-report.json` are produced.
+
+Notes:
+- No Windows path needs to be mounted into Docker for acquisition validation.
+- Network check results reflect the runner execution host network, not the API container network.
 
 ## OpenAPI Type Generation
 ```bash

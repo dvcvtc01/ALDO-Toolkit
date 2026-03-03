@@ -57,6 +57,36 @@ export type ProjectPayload = {
   notes?: string;
 };
 
+export type RunType = "acquire_scan" | "netcheck";
+export type RunStatus = "requested" | "in_progress" | "completed" | "failed";
+
+export type RunRecord = {
+  id: string;
+  projectId: string;
+  type: RunType;
+  status: RunStatus;
+  startedAt: string;
+  finishedAt: string | null;
+  executedBy: {
+    hostname: string;
+    username: string;
+    runnerVersion: string;
+  } | null;
+  transcriptText: string | null;
+  transcriptLines: Array<Record<string, unknown>>;
+  resultJson: unknown;
+  artifacts: Array<{
+    relativePath: string;
+    sha256: string;
+    sizeBytes: number;
+    modifiedAt?: string | undefined;
+  }>;
+  requestJson: Record<string, unknown>;
+  createdBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 type RequestOptions = {
   token?: string;
 };
@@ -130,46 +160,6 @@ export const projectsApi = {
 };
 
 export const validationApi = {
-  runAcquisition: async (
-    token: string,
-    projectId: string,
-    payload: {
-      azureSubscriptionActive: boolean;
-      approvalGranted: boolean;
-      hasRequiredRbac: boolean;
-      understandsNoBypass: true;
-      versionNotes: string;
-      expectedArtifacts: Array<{ relativePath: string; sha256: string; sizeBytes?: number }>;
-      providedArtifactRoot: string;
-    }
-  ): Promise<unknown> => {
-    const client = getClient({ token });
-    const result = await client.POST("/api/v1/projects/{projectId}/validate/acquisition", {
-      params: {
-        path: { projectId }
-      },
-      body: payload
-    });
-    return unwrap(result, "Acquisition validation failed");
-  },
-  runNetwork: async (
-    token: string,
-    projectId: string,
-    payload: {
-      ingressIp?: string | undefined;
-      endpoints?: string[] | undefined;
-      identityProviderHost?: string | undefined;
-    }
-  ): Promise<unknown> => {
-    const client = getClient({ token });
-    const result = await client.POST("/api/v1/projects/{projectId}/validate/network", {
-      params: {
-        path: { projectId }
-      },
-      body: payload
-    });
-    return unwrap(result, "Network validation failed");
-  },
   runPkiUpload: async (
     token: string,
     projectId: string,
@@ -232,13 +222,50 @@ export const exportApi = {
 };
 
 export const runsApi = {
-  list: async (token: string, projectId: string): Promise<unknown[]> => {
+  create: async (
+    token: string,
+    projectId: string,
+    payload: { type: RunType; requestJson?: Record<string, unknown> }
+  ): Promise<RunRecord> => {
+    const client = getClient({ token });
+    const result = await client.POST("/api/v1/projects/{projectId}/runs", {
+      params: {
+        path: { projectId }
+      },
+      body: {
+        type: payload.type,
+        requestJson: payload.requestJson ?? {}
+      }
+    });
+    return unwrap<RunRecord>(result, "Unable to create run request");
+  },
+  list: async (
+    token: string,
+    projectId: string,
+    filters?: {
+      type?: RunType;
+      status?: RunStatus;
+    }
+  ): Promise<RunRecord[]> => {
     const client = getClient({ token });
     const result = await client.GET("/api/v1/projects/{projectId}/runs", {
       params: {
-        path: { projectId }
+        path: { projectId },
+        query: {
+          ...(filters?.type ? { type: filters.type } : {}),
+          ...(filters?.status ? { status: filters.status } : {})
+        }
       }
     });
-    return unwrap<unknown[]>(result, "Unable to load runs");
+    return unwrap<RunRecord[]>(result, "Unable to load runs");
+  },
+  get: async (token: string, runId: string): Promise<RunRecord> => {
+    const client = getClient({ token });
+    const result = await client.GET("/api/v1/runs/{runId}", {
+      params: {
+        path: { runId }
+      }
+    });
+    return unwrap<RunRecord>(result, "Unable to load run");
   }
 };

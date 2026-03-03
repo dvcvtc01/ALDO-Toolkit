@@ -17,7 +17,9 @@
    - approval granted
    - RBAC permission present
 3. Enter artifact root folder, expected artifact relative path, and SHA256.
-4. Select **Validate Acquisition Checklist** to verify presence/hash and store evidence.
+4. Select **Request Acquire Scan**.
+5. Copy the generated runner command and execute it from the workstation/staging host that can access the artifact folder.
+6. Return to **Acquire** or **Runs** to review status, transcript, and scan result JSON.
 
 ## 3. Validate PKI
 1. Open **PKI** for the selected project.
@@ -35,7 +37,9 @@
 ## 4. Run Network Checks
 1. Open **Checks**.
 2. Optionally provide endpoint overrides.
-3. Select **Run Network Checks** to test DNS and TCP 443 ingress reachability.
+3. Select **Run Network Checks** to create a run request.
+4. Copy and execute the runner command from the execution host.
+5. Review latest network check output in **Checks** or full details in **Runs**.
 
 ## 5. Export Runbook and Report
 1. Open **Exports**.
@@ -44,9 +48,10 @@
    - `Runbook.md`
    - `validation-report.json`
 
-## 6. Runner Evidence (Optional)
+## 6. Runner Commands
 Use runner from workstation/staging host:
 ```powershell
-.\runner\powershell\aldo-runner\aldo-runner.ps1 run --server http://localhost:4000 --project <project-id> --token <jwt> --endpoint portal.example.com --ingress-ip 10.20.0.20
+.\runner\powershell\aldo-runner\aldo-runner.ps1 acquire scan --server http://localhost:4000 --project <project-id> --token <jwt> --root C:\artifacts --expectedPath payload\update.zip --expectedSha256 <sha256>
+.\runner\powershell\aldo-runner\aldo-runner.ps1 netcheck --server http://localhost:4000 --project <project-id> --token <jwt>
 ```
-This posts structured DNS/TCP evidence and transcript data to **Runs**.
+Commands post structured evidence, transcript, execution host details, and result JSON to **Runs**.

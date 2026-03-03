@@ -4,6 +4,7 @@ export * from "./schemas/auth.js";
 export * from "./schemas/checks.js";
 export * from "./schemas/pki.js";
 export * from "./schemas/project.js";
+export * from "./schemas/runs.js";
 export * from "./schemas/support.js";
 export * from "./utils/ip.js";
 export * from "./validators/acquisition-validator.js";

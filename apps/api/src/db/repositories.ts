@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import type { ProjectWizardInput, Role } from "@aldo/shared";
+import type { ProjectWizardInput, Role, RunStatus, RunType } from "@aldo/shared";
 import { type PoolClient } from "pg";
 
 import { pool } from "./client.js";
@@ -23,6 +23,33 @@ export type DbProject = {
   updatedAt: string;
 };
 
+export type DbRun = {
+  id: string;
+  projectId: string;
+  type: RunType;
+  status: RunStatus;
+  startedAt: string;
+  finishedAt: string | null;
+  executedBy: {
+    hostname: string;
+    username: string;
+    runnerVersion: string;
+  } | null;
+  transcriptText: string | null;
+  transcriptLines: Array<Record<string, unknown>>;
+  resultJson: unknown;
+  artifacts: Array<{
+    relativePath: string;
+    sha256: string;
+    sizeBytes: number;
+    modifiedAt?: string | undefined;
+  }>;
+  requestJson: Record<string, unknown>;
+  createdBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 const mapUser = (row: Record<string, unknown>): DbUser => ({
   id: String(row.id),
   username: String(row.username),
@@ -37,6 +64,46 @@ const mapProject = (row: Record<string, unknown>): DbProject => ({
   ownerUserId: String(row.owner_user_id),
   config: row.config as ProjectWizardInput,
   health: row.health as "Green" | "Amber" | "Red",
+  createdAt: new Date(String(row.created_at)).toISOString(),
+  updatedAt: new Date(String(row.updated_at)).toISOString()
+});
+
+const mapRun = (row: Record<string, unknown>): DbRun => ({
+  id: String(row.id),
+  projectId: String(row.project_id),
+  type: row.type as RunType,
+  status: row.status as RunStatus,
+  startedAt: new Date(String(row.started_at)).toISOString(),
+  finishedAt:
+    typeof row.finished_at === "string" || row.finished_at instanceof Date
+      ? new Date(row.finished_at).toISOString()
+      : null,
+  executedBy:
+    typeof row.executed_by === "object" && row.executed_by
+      ? (row.executed_by as {
+          hostname: string;
+          username: string;
+          runnerVersion: string;
+        })
+      : null,
+  transcriptText: typeof row.transcript_text === "string" ? row.transcript_text : null,
+  transcriptLines: Array.isArray(row.transcript_lines)
+    ? (row.transcript_lines as Array<Record<string, unknown>>)
+    : [],
+  resultJson: row.result_json ?? null,
+  artifacts: Array.isArray(row.artifacts)
+    ? (row.artifacts as Array<{
+        relativePath: string;
+        sha256: string;
+        sizeBytes: number;
+        modifiedAt?: string | undefined;
+      }>)
+    : [],
+  requestJson:
+    typeof row.request_json === "object" && row.request_json
+      ? (row.request_json as Record<string, unknown>)
+      : {},
+  createdBy: typeof row.created_by === "string" ? row.created_by : null,
   createdAt: new Date(String(row.created_at)).toISOString(),
   updatedAt: new Date(String(row.updated_at)).toISOString()
 });
@@ -274,6 +341,132 @@ export const listExports = async (projectId: string): Promise<
     validationReport: row.validation_report,
     createdAt: new Date(String(row.created_at)).toISOString()
   }));
+};
+
+export const createRun = async (
+  projectId: string,
+  type: RunType,
+  requestJson: Record<string, unknown>,
+  createdBy: string | null
+): Promise<DbRun> => {
+  const id = randomUUID();
+  const rows = await exec<Record<string, unknown>>(
+    undefined,
+    `
+      INSERT INTO runs (
+        id, project_id, type, status, started_at, request_json, created_by
+      )
+      VALUES ($1, $2, $3, 'requested', NOW(), $4::jsonb, $5)
+      RETURNING *
+    `,
+    [id, projectId, type, JSON.stringify(requestJson), createdBy]
+  );
+  return mapRun(rows[0]!);
+};
+
+export const listRunsByProject = async (
+  projectId: string,
+  filters: {
+    type?: RunType;
+    status?: RunStatus;
+  } = {}
+): Promise<DbRun[]> => {
+  const where: string[] = ["project_id = $1"];
+  const params: unknown[] = [projectId];
+  let index = 2;
+
+  if (filters.type) {
+    where.push(`type = $${index}`);
+    params.push(filters.type);
+    index++;
+  }
+
+  if (filters.status) {
+    where.push(`status = $${index}`);
+    params.push(filters.status);
+  }
+
+  const rows = await exec<Record<string, unknown>>(
+    undefined,
+    `
+      SELECT * FROM runs
+      WHERE ${where.join(" AND ")}
+      ORDER BY started_at DESC
+    `,
+    params
+  );
+  return rows.map(mapRun);
+};
+
+export const getRunById = async (runId: string): Promise<DbRun | null> => {
+  const rows = await exec<Record<string, unknown>>(
+    undefined,
+    "SELECT * FROM runs WHERE id = $1 LIMIT 1",
+    [runId]
+  );
+  if (rows.length === 0) {
+    return null;
+  }
+  return mapRun(rows[0]!);
+};
+
+export const submitRunEvidence = async (
+  runId: string,
+  payload: {
+    status: RunStatus;
+    startedAt?: string;
+    finishedAt?: string;
+    executedBy: {
+      hostname: string;
+      username: string;
+      runnerVersion: string;
+    };
+    transcriptText?: string;
+    transcriptLines: Array<Record<string, unknown>>;
+    resultJson: unknown;
+    artifacts: Array<{
+      relativePath: string;
+      sha256: string;
+      sizeBytes: number;
+      modifiedAt?: string | undefined;
+    }>;
+  }
+): Promise<DbRun | null> => {
+  const rows = await exec<Record<string, unknown>>(
+    undefined,
+    `
+      UPDATE runs
+      SET
+        status = $2,
+        started_at = COALESCE($3::timestamptz, started_at),
+        finished_at = $4::timestamptz,
+        executed_by = $5::jsonb,
+        transcript_text = $6,
+        transcript_lines = $7::jsonb,
+        result_json = $8::jsonb,
+        artifacts = $9::jsonb,
+        updated_at = NOW()
+      WHERE id = $1
+      RETURNING *
+    `,
+    [
+      runId,
+      payload.status,
+      payload.startedAt ?? null,
+      payload.finishedAt ?? null,
+      JSON.stringify(payload.executedBy),
+      payload.transcriptText ?? null,
+      JSON.stringify(payload.transcriptLines),
+      JSON.stringify(payload.resultJson),
+      JSON.stringify(payload.artifacts)
+    ]
+  );
+
+  if (rows.length === 0) {
+    return null;
+  }
+
+  return mapRun(rows[0]!);
 };
 
 export const insertRunLog = async (

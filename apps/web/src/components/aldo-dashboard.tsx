@@ -23,11 +23,14 @@ import {
   exportApi,
   type ProjectPayload,
   type ProjectRecord,
+  type RunRecord,
+  type RunStatus,
+  type RunType,
   projectsApi,
   runsApi,
   validationApi
 } from "../lib/api-client";
-import { defaultWizardInput, type WizardProjectInput, validateWizardInline } from "../lib/wizard";
+import { defaultWizardInput, type WizardProjectInput, validateWizard } from "../lib/wizard";
 
 type NavItem = "Overview" | "Plan" | "Acquire" | "PKI" | "Checks" | "Exports" | "Runs";
 
@@ -35,6 +38,7 @@ const navItems: NavItem[] = ["Overview", "Plan", "Acquire", "PKI", "Checks", "Ex
 const wizardSteps = ["Basics", "Capacity", "Network", "Identity"];
 
 const tokenStorageKey = "aldo-token";
+const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
 
 export const AldoDashboard = () => {
   const [token, setToken] = useState<string | null>(null);
@@ -60,24 +64,47 @@ export const AldoDashboard = () => {
   const [acqHasSubscription, setAcqHasSubscription] = useState(false);
   const [acqApproval, setAcqApproval] = useState(false);
   const [acqRbac, setAcqRbac] = useState(false);
+  const [acquireRunnerCommand, setAcquireRunnerCommand] = useState("");
+  const [acquireLatestRun, setAcquireLatestRun] = useState<RunRecord | null>(null);
 
   const [networkEndpoints, setNetworkEndpoints] = useState("");
-  const [networkResult, setNetworkResult] = useState<string>("");
+  const [networkRunnerCommand, setNetworkRunnerCommand] = useState("");
+  const [networkLatestRun, setNetworkLatestRun] = useState<RunRecord | null>(null);
 
   const [pkiFile, setPkiFile] = useState<File | null>(null);
   const [pkiPassphrase, setPkiPassphrase] = useState("");
   const [pkiResult, setPkiResult] = useState<string>("");
 
   const [exportsResult, setExportsResult] = useState<string>("");
-  const [runsResult, setRunsResult] = useState<string>("");
-  const [validationsResult, setValidationsResult] = useState<string>("");
+  const [runsList, setRunsList] = useState<RunRecord[]>([]);
+  const [runFilterType, setRunFilterType] = useState<"all" | RunType>("all");
+  const [runFilterStatus, setRunFilterStatus] = useState<"all" | RunStatus>("all");
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [selectedRunDetail, setSelectedRunDetail] = useState<RunRecord | null>(null);
 
   const selectedProject = useMemo(
     () => projects.find((project) => project.id === selectedProjectId) ?? null,
     [projects, selectedProjectId]
   );
 
-  const wizardIssues = useMemo(() => validateWizardInline(wizard), [wizard]);
+  const wizardValidation = useMemo(() => validateWizard(wizard), [wizard]);
+  const getWizardFieldError = (field: keyof typeof wizardValidation.fieldErrors): string | undefined =>
+    wizardValidation.fieldErrors[field];
+  const fieldValidationProps = (
+    field: keyof typeof wizardValidation.fieldErrors
+  ): {
+    validationState?: "error";
+    validationMessage?: string;
+  } => {
+    const message = getWizardFieldError(field);
+    if (!message) {
+      return {};
+    }
+    return {
+      validationState: "error",
+      validationMessage: message
+    };
+  };
 
   const projectHealthClass = (health: ProjectRecord["health"]): string => {
     if (health === "Green") return "tag-green";
@@ -169,7 +196,7 @@ export const AldoDashboard = () => {
 
   const createProject = async (): Promise<void> => {
     if (!token) return;
-    if (wizardIssues.length > 0) {
+    if (!wizardValidation.valid) {
       setStatusMessage("Resolve wizard validation issues before creating a project.");
       return;
     }
@@ -206,10 +233,49 @@ export const AldoDashboard = () => {
     }
   };
 
-  const copyRunnerCommand = async (): Promise<void> => {
-    const command = `aldo-runner run --server ${process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000"} --project ${selectedProjectId ?? "<project-id>"}`;
+  const quoteArg = (value: string): string => `"${value.replaceAll('"', '\\"')}"`;
+
+  const copyRunnerCommand = async (command: string): Promise<void> => {
     await navigator.clipboard.writeText(command);
     setStatusMessage("Runner command copied.");
+  };
+
+  const buildAcquireRunnerCommand = (runId: string): string => {
+    const command: string[] = [
+      "aldo-runner acquire scan",
+      `--server ${apiBaseUrl}`,
+      `--project ${selectedProjectId ?? "<project-id>"}`,
+      `--run ${runId}`,
+      "--token <jwt>",
+      `--root ${quoteArg(artifactRoot)}`
+    ];
+    if (artifactPath.trim().length > 0) {
+      command.push(`--expectedPath ${quoteArg(artifactPath.trim())}`);
+    }
+    if (artifactHash.trim().length > 0) {
+      command.push(`--expectedSha256 ${artifactHash.trim()}`);
+    }
+    return command.join(" ");
+  };
+
+  const buildNetworkRunnerCommand = (runId: string): string => {
+    const endpoints = networkEndpoints
+      .split("\n")
+      .map((item) => item.trim())
+      .filter(Boolean);
+
+    const command: string[] = [
+      "aldo-runner netcheck",
+      `--server ${apiBaseUrl}`,
+      `--project ${selectedProjectId ?? "<project-id>"}`,
+      `--run ${runId}`,
+      "--token <jwt>"
+    ];
+
+    if (endpoints.length > 0) {
+      command.push(`--endpoints ${quoteArg(endpoints.join(","))}`);
+    }
+    return command.join(" ");
   };
 
   const downloadWizardJson = (): void => {
@@ -222,35 +288,81 @@ export const AldoDashboard = () => {
     URL.revokeObjectURL(url);
   };
 
-  const runAcquisitionValidation = async (): Promise<void> => {
+  const refreshRunSnapshots = async (
+    authToken: string,
+    projectId: string,
+    options: {
+      runFilters?: { type?: RunType; status?: RunStatus };
+      preserveSelected?: boolean;
+    } = {}
+  ): Promise<void> => {
+    const [acquireRuns, networkRuns, filteredRuns] = await Promise.all([
+      runsApi.list(authToken, projectId, { type: "acquire_scan" }),
+      runsApi.list(authToken, projectId, { type: "netcheck" }),
+      runsApi.list(authToken, projectId, options.runFilters)
+    ]);
+
+    setAcquireLatestRun(acquireRuns[0] ?? null);
+    setNetworkLatestRun(networkRuns[0] ?? null);
+    setRunsList(filteredRuns);
+
+    if (filteredRuns.length === 0) {
+      setSelectedRunId(null);
+      setSelectedRunDetail(null);
+      return;
+    }
+
+    const nextRunId =
+      options.preserveSelected && selectedRunId && filteredRuns.some((run) => run.id === selectedRunId)
+        ? selectedRunId
+        : filteredRuns[0]!.id;
+    setSelectedRunId(nextRunId);
+
+    const detail = await runsApi.get(authToken, nextRunId);
+    setSelectedRunDetail(detail);
+  };
+
+  const requestAcquireScan = async (): Promise<void> => {
     if (!token || !selectedProjectId) return;
+    if (!acqHasSubscription || !acqApproval || !acqRbac) {
+      setStatusMessage("Acquisition prerequisites must all be confirmed before requesting a scan.");
+      return;
+    }
     setBusy(true);
     setStatusMessage("");
     try {
-      const result = await validationApi.runAcquisition(token, selectedProjectId, {
-        azureSubscriptionActive: acqHasSubscription,
-        approvalGranted: acqApproval,
-        hasRequiredRbac: acqRbac,
-        understandsNoBypass: true,
-        versionNotes: acqVersionNotes,
-        providedArtifactRoot: artifactRoot,
-        expectedArtifacts: [
-          {
-            relativePath: artifactPath,
-            sha256: artifactHash
-          }
-        ]
+      const run = await runsApi.create(token, selectedProjectId, {
+        type: "acquire_scan",
+        requestJson: {
+          providedArtifactRoot: artifactRoot,
+          expectedRelativePath: artifactPath,
+          expectedSha256: artifactHash || undefined,
+          versionNotes: acqVersionNotes,
+          azureSubscriptionActive: acqHasSubscription,
+          approvalGranted: acqApproval,
+          hasRequiredRbac: acqRbac,
+          understandsNoBypass: true
+        }
       });
-      setValidationsResult(JSON.stringify(result, null, 2));
-      setStatusMessage("Acquisition validation complete.");
+
+      const command = buildAcquireRunnerCommand(run.id);
+      setAcquireRunnerCommand(command);
+      await refreshRunSnapshots(token, selectedProjectId, {
+        runFilters: {
+          ...(runFilterType !== "all" ? { type: runFilterType } : {}),
+          ...(runFilterStatus !== "all" ? { status: runFilterStatus } : {})
+        },
+        preserveSelected: true
+      });
+      setStatusMessage("Acquire scan run requested. Execute the runner command from the target host.");
     } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Acquisition validation failed.");
+      setStatusMessage(error instanceof Error ? error.message : "Unable to request acquire scan.");
     } finally {
       setBusy(false);
     }
   };
 
-  const runNetworkValidation = async (): Promise<void> => {
+  const requestNetworkCheck = async (): Promise<void> => {
     if (!token || !selectedProjectId) return;
     setBusy(true);
     setStatusMessage("");
@@ -259,15 +371,60 @@ export const AldoDashboard = () => {
         .split("\n")
         .map((item) => item.trim())
         .filter(Boolean);
-      const result = await validationApi.runNetwork(token, selectedProjectId, {
-        endpoints: endpoints.length > 0 ? endpoints : undefined
+
+      const run = await runsApi.create(token, selectedProjectId, {
+        type: "netcheck",
+        requestJson: {
+          endpoints,
+          ingressIp: selectedProject?.ingressIp ?? undefined
+        }
       });
-      setNetworkResult(JSON.stringify(result, null, 2));
-      setStatusMessage("Network checks complete.");
+
+      const command = buildNetworkRunnerCommand(run.id);
+      setNetworkRunnerCommand(command);
+      await refreshRunSnapshots(token, selectedProjectId, {
+        runFilters: {
+          ...(runFilterType !== "all" ? { type: runFilterType } : {}),
+          ...(runFilterStatus !== "all" ? { status: runFilterStatus } : {})
+        },
+        preserveSelected: true
+      });
+      setStatusMessage("Network check run requested. Execute the runner command from the target host.");
     } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Network checks failed.");
+      setStatusMessage(error instanceof Error ? error.message : "Unable to request network checks.");
     } finally {
       setBusy(false);
+    }
+  };
+
+  const loadRuns = async (): Promise<void> => {
+    if (!token || !selectedProjectId) return;
+    setBusy(true);
+    setStatusMessage("");
+    try {
+      await refreshRunSnapshots(token, selectedProjectId, {
+        runFilters: {
+          ...(runFilterType !== "all" ? { type: runFilterType } : {}),
+          ...(runFilterStatus !== "all" ? { status: runFilterStatus } : {})
+        },
+        preserveSelected: true
+      });
+      setStatusMessage("Run data refreshed.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to refresh runs.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const selectRun = async (runId: string): Promise<void> => {
+    if (!token) return;
+    setSelectedRunId(runId);
+    try {
+      const detail = await runsApi.get(token, runId);
+      setSelectedRunDetail(detail);
+    } catch {
+      setSelectedRunDetail(null);
     }
   };
 
@@ -307,24 +464,28 @@ export const AldoDashboard = () => {
     }
   };
 
-  const refreshRuns = async (): Promise<void> => {
-    if (!token || !selectedProjectId) return;
-    setBusy(true);
-    setStatusMessage("");
-    try {
-      const [runs, validations] = await Promise.all([
-        runsApi.list(token, selectedProjectId),
-        validationApi.list(token, selectedProjectId)
-      ]);
-      setRunsResult(JSON.stringify(runs, null, 2));
-      setValidationsResult(JSON.stringify(validations, null, 2));
-      setStatusMessage("Runs and validations refreshed.");
-    } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Unable to refresh run data.");
-    } finally {
-      setBusy(false);
+  useEffect(() => {
+    if (!token || !selectedProjectId) {
+      setAcquireLatestRun(null);
+      setNetworkLatestRun(null);
+      setRunsList([]);
+      setSelectedRunId(null);
+      setSelectedRunDetail(null);
+      return;
     }
-  };
+
+    const filters = {
+      ...(runFilterType !== "all" ? { type: runFilterType } : {}),
+      ...(runFilterStatus !== "all" ? { status: runFilterStatus } : {})
+    };
+
+    void refreshRunSnapshots(token, selectedProjectId, {
+      runFilters: filters,
+      preserveSelected: true
+    }).catch(() => {
+      setStatusMessage("Unable to load run snapshots.");
+    });
+  }, [token, selectedProjectId, runFilterType, runFilterStatus]);
 
   if (!token || !user) {
     return (
@@ -460,10 +621,16 @@ export const AldoDashboard = () => {
 
             {wizardStep === 0 && (
               <div className="grid-two">
-                <Field label="Project Name">
+                <Field
+                  label="Project Name"
+                  {...fieldValidationProps("name")}
+                >
                   <Input value={wizard.name} onChange={(_, data) => setWizard((v) => ({ ...v, name: data.value }))} />
                 </Field>
-                <Field label="Environment Type">
+                <Field
+                  label="Environment Type"
+                  {...fieldValidationProps("environmentType")}
+                >
                   <Select
                     value={wizard.environmentType}
                     onChange={(_, data) =>
@@ -477,13 +644,19 @@ export const AldoDashboard = () => {
                     <option value="limited-connectivity">limited-connectivity</option>
                   </Select>
                 </Field>
-                <Field label="Domain Name">
+                <Field
+                  label="Domain Name"
+                  {...fieldValidationProps("domainName")}
+                >
                   <Input
                     value={wizard.domainName}
                     onChange={(_, data) => setWizard((v) => ({ ...v, domainName: data.value }))}
                   />
                 </Field>
-                <Field label="Description">
+                <Field
+                  label="Description"
+                  {...fieldValidationProps("description")}
+                >
                   <Input
                     value={wizard.description ?? ""}
                     onChange={(_, data) => setWizard((v) => ({ ...v, description: data.value }))}
@@ -494,7 +667,10 @@ export const AldoDashboard = () => {
 
             {wizardStep === 1 && (
               <div className="grid-two">
-                <Field label="Node Count Target (3-16)">
+                <Field
+                  label="Node Count Target (3-16)"
+                  {...fieldValidationProps("nodeCountTarget")}
+                >
                   <Input
                     type="number"
                     value={String(wizard.nodeCountTarget)}
@@ -503,10 +679,16 @@ export const AldoDashboard = () => {
                     }
                   />
                 </Field>
-                <Field label="Deployment Model">
+                <Field
+                  label="Deployment Model"
+                  {...fieldValidationProps("deploymentModel")}
+                >
                   <Input value={wizard.deploymentModel} readOnly />
                 </Field>
-                <Field label="DNS Servers (comma-separated)">
+                <Field
+                  label="DNS Servers (comma-separated)"
+                  {...fieldValidationProps("dnsServers")}
+                >
                   <Input
                     value={wizard.dnsServers.join(",")}
                     onChange={(_, data) =>
@@ -520,7 +702,10 @@ export const AldoDashboard = () => {
                     }
                   />
                 </Field>
-                <Field label="Identity Provider Host">
+                <Field
+                  label="Identity Provider Host"
+                  {...fieldValidationProps("identityProviderHost")}
+                >
                   <Input
                     value={wizard.identityProviderHost}
                     onChange={(_, data) => setWizard((v) => ({ ...v, identityProviderHost: data.value }))}
@@ -531,25 +716,37 @@ export const AldoDashboard = () => {
 
             {wizardStep === 2 && (
               <div className="grid-two">
-                <Field label="Management IP Pool (CIDR or start-end)">
+                <Field
+                  label="Management IP Pool (CIDR or start-end)"
+                  {...fieldValidationProps("managementIpPool")}
+                >
                   <Input
                     value={wizard.managementIpPool}
                     onChange={(_, data) => setWizard((v) => ({ ...v, managementIpPool: data.value }))}
                   />
                 </Field>
-                <Field label="Ingress IP">
+                <Field
+                  label="Ingress IP"
+                  {...fieldValidationProps("ingressIp")}
+                >
                   <Input
                     value={wizard.ingressIp}
                     onChange={(_, data) => setWizard((v) => ({ ...v, ingressIp: data.value }))}
                   />
                 </Field>
-                <Field label="Deployment Range (CIDR)">
+                <Field
+                  label="Deployment Range (CIDR)"
+                  {...fieldValidationProps("deploymentRange")}
+                >
                   <Input
                     value={wizard.deploymentRange}
                     onChange={(_, data) => setWizard((v) => ({ ...v, deploymentRange: data.value }))}
                   />
                 </Field>
-                <Field label="Container Network Range (CIDR)">
+                <Field
+                  label="Container Network Range (CIDR)"
+                  {...fieldValidationProps("containerNetworkRange")}
+                >
                   <Input
                     value={wizard.containerNetworkRange}
                     onChange={(_, data) => setWizard((v) => ({ ...v, containerNetworkRange: data.value }))}
@@ -560,7 +757,10 @@ export const AldoDashboard = () => {
 
             {wizardStep === 3 && (
               <div className="grid-two">
-                <Field label="Ingress Endpoint Name">
+                <Field
+                  label="Ingress Endpoint Name"
+                  {...fieldValidationProps("ingressEndpoints")}
+                >
                   <Input
                     value={wizard.ingressEndpoints[0]?.name ?? ""}
                     onChange={(_, data) =>
@@ -571,7 +771,10 @@ export const AldoDashboard = () => {
                     }
                   />
                 </Field>
-                <Field label="Ingress Endpoint FQDN">
+                <Field
+                  label="Ingress Endpoint FQDN"
+                  {...fieldValidationProps("ingressEndpoints")}
+                >
                   <Input
                     value={wizard.ingressEndpoints[0]?.fqdn ?? ""}
                     onChange={(_, data) =>
@@ -582,7 +785,10 @@ export const AldoDashboard = () => {
                     }
                   />
                 </Field>
-                <Field label="Notes">
+                <Field
+                  label="Notes"
+                  {...fieldValidationProps("notes")}
+                >
                   <Textarea
                     value={wizard.notes ?? ""}
                     onChange={(_, data) => setWizard((v) => ({ ...v, notes: data.value }))}
@@ -591,9 +797,9 @@ export const AldoDashboard = () => {
               </div>
             )}
 
-            {wizardIssues.length > 0 && (
+            {wizardValidation.summary.length > 0 && (
               <ul className="validation-list">
-                {wizardIssues.map((issue, index) => (
+                {wizardValidation.summary.map((issue, index) => (
                   <li key={`${issue}-${index}`} className="tag-red">
                     {issue}
                   </li>
@@ -617,8 +823,15 @@ export const AldoDashboard = () => {
               >
                 Next
               </Button>
-              <Button icon={<Copy24Regular />} onClick={() => void copyRunnerCommand()}>
-                Copy Runner Command
+              <Button
+                icon={<Copy24Regular />}
+                onClick={() =>
+                  void copyRunnerCommand(
+                    `aldo-runner netcheck --server ${apiBaseUrl} --project ${selectedProjectId ?? "<project-id>"} --token <jwt>`
+                  )
+                }
+              >
+                Copy NetCheck Command
               </Button>
               <Button icon={<ArrowDownload24Regular />} onClick={downloadWizardJson}>
                 Download Wizard JSON
@@ -666,14 +879,30 @@ export const AldoDashboard = () => {
               />
             </div>
             <div style={{ marginTop: 12 }}>
-              <Button appearance="primary" icon={<Play24Regular />} onClick={() => void runAcquisitionValidation()}>
-                Validate Acquisition Checklist
+              <Button appearance="primary" icon={<Play24Regular />} onClick={() => void requestAcquireScan()}>
+                Request Acquire Scan
               </Button>
             </div>
-            {validationsResult && (
-              <pre className="monospace" style={{ whiteSpace: "pre-wrap" }}>
-                {validationsResult}
-              </pre>
+            {acquireRunnerCommand && (
+              <div style={{ marginTop: 12 }}>
+                <Field label="Runner Command">
+                  <Textarea readOnly rows={3} value={acquireRunnerCommand} />
+                </Field>
+                <Button icon={<Copy24Regular />} onClick={() => void copyRunnerCommand(acquireRunnerCommand)}>
+                  Copy Command
+                </Button>
+              </div>
+            )}
+            {acquireLatestRun && (
+              <div style={{ marginTop: 12 }}>
+                <p>
+                  Latest acquire scan: {new Date(acquireLatestRun.startedAt).toLocaleString()} (
+                  {acquireLatestRun.status})
+                </p>
+                <pre className="monospace" style={{ whiteSpace: "pre-wrap" }}>
+                  {JSON.stringify(acquireLatestRun.resultJson, null, 2)}
+                </pre>
+              </div>
             )}
           </section>
         )}
@@ -721,7 +950,7 @@ export const AldoDashboard = () => {
         {activeNav === "Checks" && (
           <section className="panel">
             <h2>Network Checks</h2>
-            <p>Runs DNS endpoint checks and ingress TCP 443 reachability from the execution host.</p>
+            <p>Runner performs DNS and TCP 443 checks from the execution host network.</p>
             <Field label="Override Endpoints (one per line, optional)">
               <Textarea
                 value={networkEndpoints}
@@ -729,13 +958,29 @@ export const AldoDashboard = () => {
                 rows={5}
               />
             </Field>
-            <Button appearance="primary" onClick={() => void runNetworkValidation()}>
+            <Button appearance="primary" onClick={() => void requestNetworkCheck()}>
               Run Network Checks
             </Button>
-            {networkResult && (
-              <pre className="monospace" style={{ whiteSpace: "pre-wrap" }}>
-                {networkResult}
-              </pre>
+            {networkRunnerCommand && (
+              <div style={{ marginTop: 12 }}>
+                <Field label="Runner Command">
+                  <Textarea readOnly rows={3} value={networkRunnerCommand} />
+                </Field>
+                <Button icon={<Copy24Regular />} onClick={() => void copyRunnerCommand(networkRunnerCommand)}>
+                  Copy Command
+                </Button>
+              </div>
+            )}
+            {networkLatestRun && (
+              <div style={{ marginTop: 12 }}>
+                <p>
+                  Latest network check: {new Date(networkLatestRun.startedAt).toLocaleString()} (
+                  {networkLatestRun.status})
+                </p>
+                <pre className="monospace" style={{ whiteSpace: "pre-wrap" }}>
+                  {JSON.stringify(networkLatestRun.resultJson, null, 2)}
+                </pre>
+              </div>
             )}
           </section>
         )}
@@ -758,14 +1003,98 @@ export const AldoDashboard = () => {
         {activeNav === "Runs" && (
           <section className="panel">
             <h2>Runs</h2>
-            <p>Structured run logs and deterministic support bundle manifests.</p>
-            <Button appearance="primary" icon={<ArrowClockwise24Regular />} onClick={() => void refreshRuns()}>
-              Refresh Run Data
-            </Button>
-            {runsResult && (
-              <pre className="monospace" style={{ whiteSpace: "pre-wrap" }}>
-                {runsResult}
-              </pre>
+            <p>Auditable run history with transcript and structured evidence.</p>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+              <Field label="Type Filter">
+                <Select
+                  value={runFilterType}
+                  onChange={(_, data) => setRunFilterType(data.value as "all" | RunType)}
+                >
+                  <option value="all">all</option>
+                  <option value="acquire_scan">acquire_scan</option>
+                  <option value="netcheck">netcheck</option>
+                </Select>
+              </Field>
+              <Field label="Status Filter">
+                <Select
+                  value={runFilterStatus}
+                  onChange={(_, data) => setRunFilterStatus(data.value as "all" | RunStatus)}
+                >
+                  <option value="all">all</option>
+                  <option value="requested">requested</option>
+                  <option value="in_progress">in_progress</option>
+                  <option value="completed">completed</option>
+                  <option value="failed">failed</option>
+                </Select>
+              </Field>
+              <Button appearance="primary" icon={<ArrowClockwise24Regular />} onClick={() => void loadRuns()}>
+                Refresh Run Data
+              </Button>
+            </div>
+
+            {runsList.length > 0 ? (
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr>
+                      <th align="left">Started</th>
+                      <th align="left">Type</th>
+                      <th align="left">Status</th>
+                      <th align="left">Executed By</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {runsList.map((run) => (
+                      <tr
+                        key={run.id}
+                        style={{
+                          cursor: "pointer",
+                          background: selectedRunId === run.id ? "#ecfeff" : "transparent"
+                        }}
+                        onClick={() => void selectRun(run.id)}
+                      >
+                        <td>{new Date(run.startedAt).toLocaleString()}</td>
+                        <td>{run.type}</td>
+                        <td>{run.status}</td>
+                        <td>{run.executedBy?.hostname ?? "-"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p>No runs yet for this project/filter.</p>
+            )}
+
+            {selectedRunDetail && (
+              <div style={{ marginTop: 14 }}>
+                <h3>Run Detail</h3>
+                <p>
+                  Run ID: <span className="monospace">{selectedRunDetail.id}</span>
+                </p>
+                <p>
+                  Started: {new Date(selectedRunDetail.startedAt).toLocaleString()} | Finished:{" "}
+                  {selectedRunDetail.finishedAt
+                    ? new Date(selectedRunDetail.finishedAt).toLocaleString()
+                    : "n/a"}
+                </p>
+                <p>
+                  Executed By:{" "}
+                  {selectedRunDetail.executedBy
+                    ? `${selectedRunDetail.executedBy.username} @ ${selectedRunDetail.executedBy.hostname} (${selectedRunDetail.executedBy.runnerVersion})`
+                    : "n/a"}
+                </p>
+                <Field label="Transcript">
+                  <Textarea
+                    readOnly
+                    rows={8}
+                    value={selectedRunDetail.transcriptText ?? JSON.stringify(selectedRunDetail.transcriptLines, null, 2)}
+                  />
+                </Field>
+                <Field label="Structured Result">
+                  <Textarea readOnly rows={10} value={JSON.stringify(selectedRunDetail.resultJson, null, 2)} />
+                </Field>
+              </div>
             )}
           </section>
         )}

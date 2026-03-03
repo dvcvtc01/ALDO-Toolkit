@@ -1,21 +1,20 @@
-import { randomUUID } from "node:crypto";
+﻿import { randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import fs from "node:fs/promises";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 
 import argon2 from "argon2";
 import {
-  acquisitionChecklistSchema,
   bootstrapAdminSchema,
-  buildDeterministicSupportBundleManifest,
   loginSchema,
   pkiValidationRequestSchema,
   projectPatchSchema,
   projectWizardSchema,
-  runnerEvidencePayloadSchema,
+  runCreateRequestSchema,
+  runEvidenceSchema,
+  runStatusSchema,
+  runTypeSchema,
   userCreateSchema,
-  validateAcquisitionChecklist,
   validatePkiBundle,
   validateProjectWizard
 } from "@aldo/shared";
@@ -23,25 +22,25 @@ import type { FastifyPluginCallback } from "fastify";
 import { z } from "zod";
 
 import {
+  countUsers,
   createProject,
+  createRun,
   createUser,
   deleteProject,
   getProjectById,
+  getRunById,
   getUserById,
+  getUserByUsername,
+  insertExportRecord,
+  insertValidationRecord,
   listExports,
   listProjects,
-  listRunLogs,
+  listRunsByProject,
   listUsers,
   listValidationRecords,
-  updateProject,
-  insertAcquisitionRecord,
-  insertExportRecord,
-  insertRunLog,
-  insertValidationRecord,
-  countUsers,
-  getUserByUsername
+  submitRunEvidence,
+  updateProject
 } from "../db/repositories.js";
-import { verifyArtifacts } from "../services/acquisition-service.js";
 import { buildRunbookMarkdown, buildValidationReport } from "../services/export-builder.js";
 import { calculateProjectHealth } from "../services/project-health.js";
 import { parseCertificateBundle } from "../utils/certificates.js";
@@ -52,13 +51,13 @@ const projectIdParamsSchema = z.object({
   projectId: z.string().uuid()
 });
 
-const ipv4Regex =
-  /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
+const runIdParamsSchema = z.object({
+  runId: z.string().uuid()
+});
 
-const networkCheckSchema = z.object({
-  ingressIp: z.string().regex(ipv4Regex).optional(),
-  endpoints: z.array(z.string().trim().min(1)).min(1).optional(),
-  identityProviderHost: z.string().trim().optional()
+const runsQuerySchema = z.object({
+  type: runTypeSchema.optional(),
+  status: runStatusSchema.optional()
 });
 
 const createTokenResponse = (token: string) => ({
@@ -414,104 +413,6 @@ export const routes: FastifyPluginCallback = (app, _opts, done) => {
   );
 
   app.post(
-    "/projects/:projectId/validate/acquisition",
-    {
-      preHandler: [app.requireRole(["Admin", "Operator"])],
-      schema: {
-        tags: ["validations"],
-        params: projectIdParamsSchema,
-        body: acquisitionChecklistSchema
-      }
-    },
-    async (request, reply) => {
-      const { projectId } = projectIdParamsSchema.parse(request.params);
-      const project = await getProjectById(projectId);
-      if (!project) {
-        return reply.code(404).send({ message: "Project not found." });
-      }
-
-      const payload = acquisitionChecklistSchema.parse(request.body);
-      const baselineValidation = validateAcquisitionChecklist(payload);
-      const artifactVerification = await verifyArtifacts(payload.providedArtifactRoot, payload.expectedArtifacts);
-      const invalidArtifacts = artifactVerification.filter(
-        (artifact) => !artifact.exists || !artifact.validHash
-      ).length;
-
-      const result = {
-        ...baselineValidation,
-        artifactVerification,
-        artifactVerificationPassed: invalidArtifacts === 0
-      };
-
-      await insertAcquisitionRecord(projectId, request.user.userId, payload);
-      await insertValidationRecord(projectId, "acquisition", request.user.userId, payload, result);
-
-      const acquireDir = await ensureProjectSubdir(projectId, "acquire");
-      await writeJsonFile(
-        path.join(acquireDir, `acquisition-${new Date().toISOString().replaceAll(":", "-")}.json`),
-        { payload, result }
-      );
-
-      return result;
-    }
-  );
-
-  app.post(
-    "/projects/:projectId/validate/network",
-    {
-      preHandler: [app.requireRole(["Admin", "Operator", "Viewer"])],
-      schema: {
-        tags: ["validations"],
-        params: projectIdParamsSchema,
-        body: networkCheckSchema.optional()
-      }
-    },
-    async (request, reply) => {
-      const { projectId } = projectIdParamsSchema.parse(request.params);
-      const project = await getProjectById(projectId);
-      if (!project) {
-        return reply.code(404).send({ message: "Project not found." });
-      }
-
-      const overrides = networkCheckSchema.parse(request.body ?? {});
-      const endpoints =
-        overrides.endpoints && overrides.endpoints.length > 0
-          ? overrides.endpoints
-          : project.config.ingressEndpoints.map((endpoint) => endpoint.fqdn);
-      const ingressIp = overrides.ingressIp ?? project.config.ingressIp;
-      const identityProviderHost = overrides.identityProviderHost ?? project.config.identityProviderHost;
-
-      const dnsChecks = await Promise.all(endpoints.map((endpoint) => runDnsCheck(endpoint)));
-      const identityProviderCheck = await runDnsCheck(identityProviderHost);
-      const tcpCheck = await runTcpCheck(ingressIp, 443);
-
-      const result = {
-        dnsChecks,
-        identityProviderCheck,
-        tcpCheck,
-        valid:
-          dnsChecks.every((check) => check.resolved) &&
-          identityProviderCheck.resolved &&
-          tcpCheck.reachable
-      };
-
-      await insertValidationRecord(
-        projectId,
-        "network",
-        request.user.userId,
-        {
-          ingressIp,
-          endpoints,
-          identityProviderHost
-        },
-        result
-      );
-
-      return result;
-    }
-  );
-
-  app.post(
     "/projects/:projectId/validate/pki",
     {
       preHandler: [app.requireRole(["Admin", "Operator"])],
@@ -532,8 +433,7 @@ export const routes: FastifyPluginCallback = (app, _opts, done) => {
         return reply.code(400).send({ message: "Certificate bundle file is required." });
       }
 
-      const deployDateRaw =
-        getMultipartFieldValue(upload.fields?.deployDate) ?? new Date().toISOString();
+      const deployDateRaw = getMultipartFieldValue(upload.fields?.deployDate) ?? new Date().toISOString();
       const deployDate = new Date(deployDateRaw);
       if (Number.isNaN(deployDate.getTime())) {
         return reply.code(400).send({ message: "deployDate must be a valid ISO date string." });
@@ -563,7 +463,14 @@ export const routes: FastifyPluginCallback = (app, _opts, done) => {
               reachability[endpoint] = false;
               return;
             }
-            const tcp = await runTcpCheck(parsed.hostname, parsed.port ? Number.parseInt(parsed.port, 10) : parsed.protocol === "https:" ? 443 : 80);
+            const tcp = await runTcpCheck(
+              parsed.hostname,
+              parsed.port
+                ? Number.parseInt(parsed.port, 10)
+                : parsed.protocol === "https:"
+                  ? 443
+                  : 80
+            );
             reachability[endpoint] = tcp.reachable;
           } catch {
             reachability[endpoint] = false;
@@ -573,7 +480,6 @@ export const routes: FastifyPluginCallback = (app, _opts, done) => {
 
       const result = validatePkiBundle(input, reachability);
       await insertValidationRecord(projectId, "pki", request.user.userId, input, result);
-
       await writeJsonFile(path.join(uploadDir, `pki-result-${Date.now()}.json`), { input, result });
 
       return {
@@ -664,64 +570,102 @@ export const routes: FastifyPluginCallback = (app, _opts, done) => {
   );
 
   app.post(
-    "/projects/:projectId/runs/evidence",
+    "/projects/:projectId/runs",
     {
       preHandler: [app.requireRole(["Admin", "Operator"])],
       schema: {
         tags: ["runs"],
         params: projectIdParamsSchema,
-        body: runnerEvidencePayloadSchema
+        body: runCreateRequestSchema
       }
     },
     async (request, reply) => {
       const { projectId } = projectIdParamsSchema.parse(request.params);
-      const payload = runnerEvidencePayloadSchema.parse(request.body);
-
-      if (payload.projectId !== projectId) {
-        return reply.code(400).send({ message: "Project ID mismatch between URL and payload." });
-      }
-
       const project = await getProjectById(projectId);
       if (!project) {
         return reply.code(404).send({ message: "Project not found." });
       }
 
-      const runId = randomUUID();
-      const runDir = path.join(await ensureProjectSubdir(projectId, "runs"), runId);
-      await fs.mkdir(runDir, { recursive: true });
+      const payload = runCreateRequestSchema.parse(request.body);
+      const run = await createRun(projectId, payload.type, payload.requestJson, request.user.userId);
+      return run;
+    }
+  );
 
-      const transcriptFile = path.join(runDir, "transcript.json");
-      const dnsFile = path.join(runDir, "dns-checks.json");
-      const tcpFile = path.join(runDir, "tcp-checks.json");
-      const envCheckerFile = path.join(runDir, "environment-checker.json");
+  app.post(
+    "/runs/:runId/evidence",
+    {
+      preHandler: [app.requireRole(["Admin", "Operator"])],
+      schema: {
+        tags: ["runs"],
+        params: runIdParamsSchema,
+        body: runEvidenceSchema
+      }
+    },
+    async (request, reply) => {
+      const { runId } = runIdParamsSchema.parse(request.params);
+      const existing = await getRunById(runId);
+      if (!existing) {
+        return reply.code(404).send({ message: "Run not found." });
+      }
 
-      await writeJsonFile(transcriptFile, payload.transcript);
-      await writeJsonFile(dnsFile, payload.dnsChecks);
-      await writeJsonFile(tcpFile, payload.tcpChecks);
-      await writeJsonFile(envCheckerFile, payload.environmentChecker);
+      const payload = runEvidenceSchema.parse(request.body);
+      const isTerminalStatus = payload.status === "completed" || payload.status === "failed";
+      const finishedAt = isTerminalStatus
+        ? (payload.finishedAt ?? new Date().toISOString())
+        : payload.finishedAt;
 
-      const manifest = buildDeterministicSupportBundleManifest(
-        [
-          { path: "dns-checks.json", content: JSON.stringify(payload.dnsChecks) },
-          { path: "environment-checker.json", content: JSON.stringify(payload.environmentChecker) },
-          { path: "tcp-checks.json", content: JSON.stringify(payload.tcpChecks) },
-          { path: "transcript.json", content: JSON.stringify(payload.transcript) }
-        ],
-        payload.mode,
-        payload.collectedAt
+      const evidenceUpdate: Parameters<typeof submitRunEvidence>[1] = {
+        status: payload.status,
+        executedBy: payload.executedBy,
+        transcriptLines: payload.transcriptLines,
+        resultJson: payload.resultJson,
+        artifacts: payload.artifacts
+      };
+      if (payload.startedAt) {
+        evidenceUpdate.startedAt = payload.startedAt;
+      }
+      if (finishedAt) {
+        evidenceUpdate.finishedAt = finishedAt;
+      }
+      if (payload.transcriptText) {
+        evidenceUpdate.transcriptText = payload.transcriptText;
+      }
+
+      const run = await submitRunEvidence(runId, evidenceUpdate);
+
+      if (!run) {
+        return reply.code(404).send({ message: "Run not found." });
+      }
+
+      const runRoot = await ensureProjectSubdir(existing.projectId, "runs");
+      const runDir = path.join(runRoot, runId);
+      await writeJsonFile(path.join(runDir, "evidence.json"), {
+        runId,
+        projectId: existing.projectId,
+        receivedAt: new Date().toISOString(),
+        payload
+      });
+      await writeJsonFile(path.join(runDir, "result.json"), payload.resultJson);
+      await writeJsonFile(path.join(runDir, "artifacts.json"), payload.artifacts);
+      await writeJsonFile(path.join(runDir, "transcript-lines.json"), payload.transcriptLines);
+      if (payload.transcriptText) {
+        await writeTextFile(path.join(runDir, "transcript.txt"), payload.transcriptText);
+      }
+
+      await insertValidationRecord(
+        existing.projectId,
+        existing.type === "acquire_scan" ? "runner_acquire_scan" : "runner_netcheck",
+        request.user.userId,
+        {
+          runId,
+          type: existing.type,
+          requestJson: existing.requestJson
+        },
+        payload.resultJson
       );
 
-      await writeJsonFile(path.join(runDir, "support-bundle-manifest.json"), manifest);
-      await insertRunLog(projectId, payload.mode, payload, manifest);
-      await insertValidationRecord(projectId, "runner_evidence", request.user.userId, payload, {
-        manifest,
-        runId
-      });
-
-      return {
-        runId,
-        supportBundleManifest: manifest
-      };
+      return run;
     }
   );
 
@@ -731,7 +675,8 @@ export const routes: FastifyPluginCallback = (app, _opts, done) => {
       preHandler: [app.requireRole(["Admin", "Operator", "Viewer"])],
       schema: {
         tags: ["runs"],
-        params: projectIdParamsSchema
+        params: projectIdParamsSchema,
+        querystring: runsQuerySchema
       }
     },
     async (request, reply) => {
@@ -740,7 +685,31 @@ export const routes: FastifyPluginCallback = (app, _opts, done) => {
       if (!project) {
         return reply.code(404).send({ message: "Project not found." });
       }
-      return listRunLogs(projectId);
+
+      const query = runsQuerySchema.parse(request.query ?? {});
+      return listRunsByProject(projectId, {
+        ...(query.type ? { type: query.type } : {}),
+        ...(query.status ? { status: query.status } : {})
+      });
+    }
+  );
+
+  app.get(
+    "/runs/:runId",
+    {
+      preHandler: [app.requireRole(["Admin", "Operator", "Viewer"])],
+      schema: {
+        tags: ["runs"],
+        params: runIdParamsSchema
+      }
+    },
+    async (request, reply) => {
+      const { runId } = runIdParamsSchema.parse(request.params);
+      const run = await getRunById(runId);
+      if (!run) {
+        return reply.code(404).send({ message: "Run not found." });
+      }
+      return run;
     }
   );
 

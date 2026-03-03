@@ -51,7 +51,7 @@ export const buildApp = async (
     openapi: {
       info: {
         title: "ALDO Toolkit API",
-        version: "0.1.0",
+        version: "0.2.0",
         description: "Azure Local DisconnectedOps Toolkit API"
       },
       tags: [

@@ -1,17 +1,42 @@
-Set-StrictMode -Version Latest
+﻿Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 Import-Module (Join-Path $PSScriptRoot "Aldo.Runner.psd1") -Force
 
-if ($args.Count -eq 0) {
-    throw "Usage: aldo-runner run --server <url> --project <id> --token <jwt> [--mode direct|indirect|fallback] [--endpoint fqdn] [--ingress-ip ip] [--out file]"
+if ($args.Count -lt 1) {
+    throw "Usage: aldo-runner acquire scan|netcheck --server <url> --project <id> --token <jwt> [options]"
 }
 
-$command = $args[0]
-$map = @{}
-$endpoints = New-Object System.Collections.Generic.List[string]
+$primary = ([string]$args[0]).ToLowerInvariant()
+$command = $null
+$startIndex = 1
 
-$i = 1
+switch ($primary) {
+    "acquire" {
+        if ($args.Count -lt 2 -or ([string]$args[1]).ToLowerInvariant() -ne "scan") {
+            throw "Usage: aldo-runner acquire scan --server <url> --project <id> --root <path> [--expectedPath <relative>] [--expectedSha256 <sha>] [--run <run-id>] [--out <file>]"
+        }
+        $command = "acquire_scan"
+        $startIndex = 2
+    }
+    "netcheck" {
+        $command = "netcheck"
+        $startIndex = 1
+    }
+    "run" {
+        # Backward-compatible alias from v0.1.0
+        $command = "netcheck"
+        $startIndex = 1
+    }
+    default {
+        throw "Unknown command '$primary'. Use 'acquire scan' or 'netcheck'."
+    }
+}
+
+$map = @{}
+$endpointItems = New-Object System.Collections.Generic.List[string]
+
+$i = $startIndex
 while ($i -lt $args.Count) {
     $rawKey = [string]$args[$i]
     if (-not $rawKey.StartsWith("-")) {
@@ -20,10 +45,11 @@ while ($i -lt $args.Count) {
     }
 
     $key = $rawKey.TrimStart("-").ToLowerInvariant()
+
     if ($key -eq "endpoint") {
         $i++
         if ($i -lt $args.Count) {
-            $endpoints.Add([string]$args[$i])
+            $endpointItems.Add([string]$args[$i])
         }
         $i++
         continue
@@ -38,18 +64,40 @@ while ($i -lt $args.Count) {
 
 if (-not $map.ContainsKey("server")) { throw "--server is required" }
 if (-not $map.ContainsKey("project")) { throw "--project is required" }
-if (-not $map.ContainsKey("token")) { throw "--token is required" }
 
-$mode = if ($map.ContainsKey("mode")) { $map["mode"] } else { "direct" }
-$ingressIp = if ($map.ContainsKey("ingress-ip")) { $map["ingress-ip"] } elseif ($map.ContainsKey("ingressip")) { $map["ingressip"] } else { $null }
+$token = $null
+if ($map.ContainsKey("token")) {
+    $token = $map["token"]
+}
+elseif ($env:ALDO_TOKEN) {
+    $token = $env:ALDO_TOKEN
+}
+
+if ([string]::IsNullOrWhiteSpace($token)) { throw "--token is required (or set ALDO_TOKEN)" }
+
+$run = if ($map.ContainsKey("run")) { $map["run"] } else { $null }
 $outputPath = if ($map.ContainsKey("out")) { $map["out"] } else { $null }
+
+$root = if ($map.ContainsKey("root")) { $map["root"] } else { $null }
+$expectedSha256 = if ($map.ContainsKey("expectedsha256")) { $map["expectedsha256"] } else { $null }
+$expectedPath = if ($map.ContainsKey("expectedpath")) { $map["expectedpath"] } elseif ($map.ContainsKey("expectedrelativepath")) { $map["expectedrelativepath"] } else { $null }
+$endpoints = if ($map.ContainsKey("endpoints")) { $map["endpoints"] } else { $null }
+$ingressIp = if ($map.ContainsKey("ingress-ip")) { $map["ingress-ip"] } elseif ($map.ContainsKey("ingressip")) { $map["ingressip"] } else { $null }
+
+if ($command -eq "acquire_scan" -and [string]::IsNullOrWhiteSpace($root)) {
+    throw "--root is required for acquire scan"
+}
 
 Invoke-AldoRunner `
     -Command $command `
     -Server $map["server"] `
     -Project $map["project"] `
-    -Token $map["token"] `
-    -Mode $mode `
-    -Endpoints $endpoints.ToArray() `
+    -Token $token `
+    -Run $run `
+    -Root $root `
+    -ExpectedPath $expectedPath `
+    -ExpectedSha256 $expectedSha256 `
+    -Endpoints $endpoints `
+    -Endpoint $endpointItems.ToArray() `
     -IngressIp $ingressIp `
     -OutputPath $outputPath

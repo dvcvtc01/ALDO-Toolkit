@@ -4,11 +4,11 @@
 ALDO Toolkit is an open-source, self-hosted planner/validator/evidence system for Azure Local disconnected operations. It does not replace Microsoft control-plane actions. It reduces operator error by wrapping documented flows and preserving deterministic evidence.
 
 ## System Components
-- `apps/web` (Next.js + Fluent UI): wizard-led interface for planning, acquisition checks, PKI validation submission, network checks, exports, and run evidence views.
-- `apps/api` (Fastify + OpenAPI): auth, RBAC, project CRUD, validators, exports, and run ingestion endpoints.
+- `apps/web` (Next.js + Fluent UI): wizard-led interface for planning, requesting runner-based acquisition/network runs, PKI validation submission, exports, and run evidence views.
+- `apps/api` (Fastify + OpenAPI): auth, RBAC, project CRUD, validators, exports, run request lifecycle, and run evidence ingestion endpoints.
 - `apps/worker` (BullMQ): async processing skeleton for follow-on evidence and OperationsModule workflows.
 - `packages/shared` (zod + validators): shared data contracts and core validation logic.
-- `runner/powershell/aldo-runner`: workstation/staging-host execution runner for DNS/TCP checks and transcript posting.
+- `runner/powershell/aldo-runner`: workstation/staging-host execution runner for acquisition folder scanning, DNS/TCP checks, and transcript posting.
 - Postgres: source of truth for users, projects, validation records, exports, and runs.
 - Redis: queue broker for worker jobs.
 - Local object storage volume: stores generated artifacts and evidence files.
@@ -27,14 +27,15 @@ ALDO Toolkit is an open-source, self-hosted planner/validator/evidence system fo
 - `users`: local auth records (`argon2id` password hash), role (`Admin|Operator|Viewer`).
 - `projects`: persisted wizard config, computed health status, owner.
 - `validation_records`: immutable validation inputs/results with timestamps.
-- `acquisition_records`: acquisition checklist payload history.
+- `acquisition_records`: legacy acquisition checklist payload history from initial MVP path.
 - `exports`: generated `Runbook.md` and `validation-report.json`.
-- `run_logs`: structured runner payloads and support bundle manifests.
+- `runs`: requested and executed runs (`acquire_scan`, `netcheck`) with status, transcript, structured result JSON, execution host metadata, and artifact metadata.
+- `run_logs`: legacy support-bundle payload table from initial runner endpoint.
 
 ## Auditability
 - Every major action stores input, output, timestamp, and actor ID.
 - Generated files are persisted to deterministic project paths under data volume.
-- Runner transcripts are preserved as structured JSON entries and support bundle manifests include sorted SHA256 hashes.
+- Runner transcripts are preserved as text + structured line entries, with run result JSON and artifact metadata persisted per run.
 
 ## Offline-First Behavior
 - Toolkit operates without internet post-install.
@@ -47,4 +48,6 @@ ALDO Toolkit is an open-source, self-hosted planner/validator/evidence system fo
 - PKI upload accepts `.pfx/.p12/.cer/.crt/.der/.pem`; encrypted private-key handling beyond certificate extraction is out of MVP scope.
 - API and web are deployed behind trusted internal networking and TLS termination is handled at the environment edge.
 - Runner authenticates with a user-provided API bearer token.
+- UI run requests generate run IDs; runner commands can target an existing run ID (`--run`) or create a run request when omitted.
+- Acquisition and network host-dependent checks are executed from runner hosts, not from API container filesystem/network context.
 - Object storage backend is local filesystem volume for MVP; MinIO integration is future work.
