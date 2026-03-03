@@ -1,0 +1,88 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: aldo
+      POSTGRES_USER: aldo
+      POSTGRES_PASSWORD: aldo
+    ports:
+      - "5432:5432"
+    volumes:
+      - aldo-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aldo -d aldo"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - aldo-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.dev
+    restart: unless-stopped
+    command: npm run dev -w apps/api
+    environment:
+      NODE_ENV: development
+      HOST: 0.0.0.0
+      PORT: 4000
+      DATABASE_URL: postgres://aldo:aldo@postgres:5432/aldo
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET:-aldo-dev-jwt-secret-change-before-production-12345}
+      DATA_DIR: /workspace/.data
+      WEB_ORIGIN: http://localhost:3000
+    ports:
+      - "4000:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - aldo-api-data:/workspace/.data
+
+  worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.dev
+    restart: unless-stopped
+    command: npm run dev -w apps/worker
+    environment:
+      NODE_ENV: development
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.dev
+    restart: unless-stopped
+    command: npm run dev -w apps/web
+    environment:
+      NODE_ENV: development
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:4000
+    ports:
+      - "3000:3000"
+    depends_on:
+      api:
+        condition: service_started
+
+volumes:
+  aldo-postgres-data:
+  aldo-redis-data:
+  aldo-api-data:

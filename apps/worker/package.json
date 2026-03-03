@@ -1,0 +1,22 @@
+{
+  "name": "@aldo/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/worker.js",
+  "types": "dist/worker.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsx watch src/worker.ts",
+    "start": "node dist/worker.js",
+    "lint": "eslint src --ext .ts",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@aldo/shared": "0.1.0",
+    "bullmq": "^5.43.0",
+    "dotenv": "^16.4.7",
+    "pino": "^9.6.0",
+    "zod": "^3.24.2"
+  }
+}
