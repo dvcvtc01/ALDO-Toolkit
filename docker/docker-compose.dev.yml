@@ -62,10 +62,16 @@ services:
     command: npm run dev -w apps/worker
     environment:
       NODE_ENV: development
+      DATABASE_URL: postgres://aldo:aldo@postgres:5432/aldo
       REDIS_URL: redis://redis:6379
+      DATA_DIR: /workspace/.data
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
+    volumes:
+      - aldo-api-data:/workspace/.data
 
   web:
     build:

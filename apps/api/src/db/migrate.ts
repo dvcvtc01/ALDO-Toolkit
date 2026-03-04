@@ -46,7 +46,7 @@ const statements = [
   `CREATE TABLE IF NOT EXISTS runs (
     id UUID PRIMARY KEY,
     project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    type TEXT NOT NULL CHECK (type IN ('acquire_scan', 'netcheck', 'envcheck')),
+    type TEXT NOT NULL CHECK (type IN ('acquire_scan', 'netcheck', 'pki_validate', 'envcheck')),
     status TEXT NOT NULL CHECK (status IN ('requested', 'in_progress', 'completed', 'failed')),
     started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     finished_at TIMESTAMPTZ,
@@ -68,11 +68,27 @@ const statements = [
     support_bundle JSONB NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   );`,
+  `CREATE TABLE IF NOT EXISTS support_bundles (
+    id UUID PRIMARY KEY,
+    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    status TEXT NOT NULL CHECK (status IN ('queued', 'building', 'ready', 'failed')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    started_at TIMESTAMPTZ,
+    finished_at TIMESTAMPTZ,
+    requested_by_user_id UUID REFERENCES users(id),
+    file_path TEXT,
+    file_size BIGINT,
+    sha256 TEXT,
+    manifest_json JSONB,
+    error TEXT
+  );`,
   `CREATE INDEX IF NOT EXISTS idx_projects_owner ON projects(owner_user_id);`,
   `CREATE INDEX IF NOT EXISTS idx_validation_records_project ON validation_records(project_id, validation_type);`,
   `CREATE INDEX IF NOT EXISTS idx_run_logs_project ON run_logs(project_id);`,
   `CREATE INDEX IF NOT EXISTS idx_runs_project ON runs(project_id, created_at DESC);`,
   `CREATE INDEX IF NOT EXISTS idx_runs_type_status ON runs(type, status);`,
+  `CREATE INDEX IF NOT EXISTS idx_support_bundles_project ON support_bundles(project_id, created_at DESC);`,
+  `CREATE INDEX IF NOT EXISTS idx_support_bundles_status ON support_bundles(status, created_at DESC);`,
   `DO $$
 BEGIN
   IF EXISTS (
@@ -84,7 +100,21 @@ BEGIN
     ALTER TABLE runs DROP CONSTRAINT IF EXISTS runs_type_check;
     ALTER TABLE runs
       ADD CONSTRAINT runs_type_check
-      CHECK (type IN ('acquire_scan', 'netcheck', 'envcheck'));
+      CHECK (type IN ('acquire_scan', 'netcheck', 'pki_validate', 'envcheck'));
+  END IF;
+END $$;`,
+  `DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.tables
+    WHERE table_schema = 'public'
+      AND table_name = 'support_bundles'
+  ) THEN
+    ALTER TABLE support_bundles DROP CONSTRAINT IF EXISTS support_bundles_status_check;
+    ALTER TABLE support_bundles
+      ADD CONSTRAINT support_bundles_status_check
+      CHECK (status IN ('queued', 'building', 'ready', 'failed'));
   END IF;
 END $$;`
 ];

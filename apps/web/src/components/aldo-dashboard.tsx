@@ -28,6 +28,8 @@ import {
   type RunType,
   projectsApi,
   runsApi,
+  supportBundlesApi,
+  type SupportBundleRecord,
   validationApi
 } from "../lib/api-client";
 import { defaultWizardInput, type WizardProjectInput, validateWizard } from "../lib/wizard";
@@ -80,6 +82,8 @@ export const AldoDashboard = () => {
   const [pkiResult, setPkiResult] = useState<string>("");
 
   const [exportsResult, setExportsResult] = useState<string>("");
+  const [supportBundles, setSupportBundles] = useState<SupportBundleRecord[]>([]);
+  const [selectedBundleDetail, setSelectedBundleDetail] = useState<SupportBundleRecord | null>(null);
   const [runsList, setRunsList] = useState<RunRecord[]>([]);
   const [runFilterType, setRunFilterType] = useState<"all" | RunType>("all");
   const [runFilterStatus, setRunFilterStatus] = useState<"all" | RunStatus>("all");
@@ -114,6 +118,12 @@ export const AldoDashboard = () => {
     if (health === "Green") return "tag-green";
     if (health === "Amber") return "tag-amber";
     return "tag-red";
+  };
+
+  const supportBundleStatusClass = (status: SupportBundleRecord["status"]): string => {
+    if (status === "ready") return "tag-green";
+    if (status === "failed") return "tag-red";
+    return "tag-amber";
   };
 
   const envcheckSummaryFromRun = (
@@ -179,12 +189,22 @@ export const AldoDashboard = () => {
     setUser(null);
     setProjects([]);
     setSelectedProjectId(null);
+    setSupportBundles([]);
+    setSelectedBundleDetail(null);
   };
 
   const loadProjects = async (authToken: string): Promise<void> => {
     const projectList = await projectsApi.list(authToken);
     setProjects(projectList);
     setSelectedProjectId((current) => current ?? projectList[0]?.id ?? null);
+  };
+
+  const loadSupportBundles = async (authToken: string, projectId: string): Promise<void> => {
+    const bundles = await supportBundlesApi.list(authToken, projectId);
+    setSupportBundles(bundles);
+    setSelectedBundleDetail((current) =>
+      current ? bundles.find((bundle) => bundle.id === current.id) ?? null : null
+    );
   };
 
   useEffect(() => {
@@ -572,11 +592,59 @@ export const AldoDashboard = () => {
     }
   };
 
+  const requestSupportBundle = async (): Promise<void> => {
+    if (!token || !selectedProjectId) return;
+    setBusy(true);
+    setStatusMessage("");
+    try {
+      const bundle = await supportBundlesApi.create(token, selectedProjectId);
+      await loadSupportBundles(token, selectedProjectId);
+      setSelectedBundleDetail(bundle);
+      setStatusMessage("Support bundle queued. Worker will build it asynchronously.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Support bundle request failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const viewSupportBundleDetails = async (bundleId: string): Promise<void> => {
+    if (!token) return;
+    try {
+      const detail = await supportBundlesApi.get(token, bundleId);
+      setSelectedBundleDetail(detail);
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to load support bundle details.");
+    }
+  };
+
+  const downloadSupportBundle = async (bundleId: string): Promise<void> => {
+    if (!token) return;
+    setBusy(true);
+    setStatusMessage("");
+    try {
+      const { blob, filename } = await supportBundlesApi.download(token, bundleId);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      link.click();
+      URL.revokeObjectURL(url);
+      setStatusMessage("Support bundle downloaded.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Support bundle download failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   useEffect(() => {
     if (!token || !selectedProjectId) {
       setAcquireLatestRun(null);
       setNetworkLatestRun(null);
       setEnvcheckLatestRun(null);
+      setSupportBundles([]);
+      setSelectedBundleDetail(null);
       setRunsList([]);
       setSelectedRunId(null);
       setSelectedRunDetail(null);
@@ -593,6 +661,10 @@ export const AldoDashboard = () => {
       preserveSelected: true
     }).catch(() => {
       setStatusMessage("Unable to load run snapshots.");
+    });
+
+    void loadSupportBundles(token, selectedProjectId).catch(() => {
+      setStatusMessage("Unable to load support bundles.");
     });
   }, [token, selectedProjectId, runFilterType, runFilterStatus]);
 
@@ -1157,14 +1229,90 @@ export const AldoDashboard = () => {
         {activeNav === "Exports" && (
           <section className="panel">
             <h2>Exports</h2>
-            <p>Generate `Runbook.md` and `validation-report.json` per project.</p>
-            <Button appearance="primary" icon={<ArrowDownload24Regular />} onClick={() => void generateExport()}>
-              Generate Export
-            </Button>
+            <p>Generate `Runbook.md`, `validation-report.json`, and Support Bundle v1 zip packages.</p>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <Button appearance="primary" icon={<ArrowDownload24Regular />} onClick={() => void generateExport()}>
+                Generate Export
+              </Button>
+              <Button appearance="secondary" icon={<Play24Regular />} onClick={() => void requestSupportBundle()}>
+                Generate Support Bundle
+              </Button>
+              <Button icon={<ArrowClockwise24Regular />} onClick={() => token && selectedProjectId && void loadSupportBundles(token, selectedProjectId)}>
+                Refresh Bundles
+              </Button>
+            </div>
             {exportsResult && (
               <pre className="monospace" style={{ whiteSpace: "pre-wrap" }}>
                 {exportsResult}
               </pre>
+            )}
+
+            <h3 style={{ marginTop: 14 }}>Support Bundles</h3>
+            {supportBundles.length === 0 ? (
+              <p>No support bundles yet for this project.</p>
+            ) : (
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr>
+                      <th align="left">Created</th>
+                      <th align="left">Status</th>
+                      <th align="left">SHA256</th>
+                      <th align="left">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {supportBundles.map((bundle) => (
+                      <tr key={bundle.id}>
+                        <td>{new Date(bundle.createdAt).toLocaleString()}</td>
+                        <td className={supportBundleStatusClass(bundle.status)}>{bundle.status}</td>
+                        <td className="monospace">
+                          {bundle.sha256 ? `${bundle.sha256.slice(0, 12)}...` : "-"}
+                        </td>
+                        <td style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          <Button onClick={() => void viewSupportBundleDetails(bundle.id)}>View Details</Button>
+                          <Button
+                            appearance="primary"
+                            disabled={bundle.status !== "ready"}
+                            onClick={() => void downloadSupportBundle(bundle.id)}
+                          >
+                            Download
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {selectedBundleDetail && (
+              <div style={{ marginTop: 12 }}>
+                <h4>Bundle Detail</h4>
+                <p>
+                  Bundle ID: <span className="monospace">{selectedBundleDetail.id}</span>
+                </p>
+                <p>
+                  Status:{" "}
+                  <span className={supportBundleStatusClass(selectedBundleDetail.status)}>
+                    {selectedBundleDetail.status}
+                  </span>
+                </p>
+                <p>
+                  File Size: {selectedBundleDetail.fileSize ? `${selectedBundleDetail.fileSize} bytes` : "n/a"} |
+                  SHA256:{" "}
+                  <span className="monospace">{selectedBundleDetail.sha256 ?? "n/a"}</span>
+                </p>
+                {selectedBundleDetail.error && (
+                  <p className="tag-red">Error: {selectedBundleDetail.error}</p>
+                )}
+                {selectedBundleDetail.manifestJson && (
+                  <p>
+                    Manifest files: {selectedBundleDetail.manifestJson.files.length} (
+                    {selectedBundleDetail.manifestJson.generatedAtUtc})
+                  </p>
+                )}
+              </div>
             )}
           </section>
         )}
@@ -1182,6 +1330,7 @@ export const AldoDashboard = () => {
                   <option value="all">all</option>
                   <option value="acquire_scan">acquire_scan</option>
                   <option value="netcheck">netcheck</option>
+                  <option value="pki_validate">pki_validate</option>
                   <option value="envcheck">envcheck</option>
                 </Select>
               </Field>

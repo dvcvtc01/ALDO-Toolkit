@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const runTypeSchema = z.enum(["acquire_scan", "netcheck", "envcheck"]);
+export const runTypeSchema = z.enum(["acquire_scan", "netcheck", "pki_validate", "envcheck"]);
 export const runStatusSchema = z.enum(["requested", "in_progress", "completed", "failed"]);
 
 export const runCreateRequestSchema = z.object({

@@ -29,13 +29,14 @@ ALDO Toolkit is an open-source, self-hosted planner/validator/evidence system fo
 - `validation_records`: immutable validation inputs/results with timestamps.
 - `acquisition_records`: legacy acquisition checklist payload history from initial MVP path.
 - `exports`: generated `Runbook.md` and `validation-report.json`.
-- `runs`: requested and executed runs (`acquire_scan`, `netcheck`, `envcheck`) with status, transcript, structured result JSON, execution host metadata, and artifact metadata.
-- `run_logs`: legacy support-bundle payload table from initial runner endpoint.
+- `runs`: requested and executed runs (`acquire_scan`, `netcheck`, `pki_validate`, `envcheck`) with status, transcript, structured result JSON, execution host metadata, and artifact metadata.
+- `support_bundles`: async bundle build records with queue/build status, output file metadata, deterministic manifest snapshot, and error state.
 
 ## Auditability
 - Every major action stores input, output, timestamp, and actor ID.
 - Generated files are persisted to deterministic project paths under data volume.
 - Runner transcripts are preserved as text + structured line entries, with run result JSON and artifact metadata persisted per run.
+- Support bundles are generated asynchronously by worker jobs and stored on a shared local filesystem volume between API and worker.
 
 ## Offline-First Behavior
 - Toolkit operates without internet post-install.
@@ -52,3 +53,4 @@ ALDO Toolkit is an open-source, self-hosted planner/validator/evidence system fo
 - Acquisition and network host-dependent checks are executed from runner hosts, not from API container filesystem/network context.
 - Environment Checker module binaries are staged offline by operators; runner discovers/invokes checker commands from the provided module path.
 - Object storage backend is local filesystem volume for MVP; MinIO integration is future work.
+- For support bundle inclusion, only the latest completed run per type (`acquire_scan`, `netcheck`, `pki_validate`, `envcheck`) is packaged when present.

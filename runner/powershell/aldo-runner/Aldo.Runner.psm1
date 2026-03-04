@@ -1,4 +1,4 @@
-﻿Set-StrictMode -Version Latest
+Set-StrictMode -Version Latest
 
 function Get-RunnerVersion {
     try {
@@ -6,7 +6,7 @@ function Get-RunnerVersion {
         return (Test-ModuleManifest -Path $manifestPath).Version.ToString()
     }
     catch {
-        return "0.3.0"
+        return "0.4.0"
     }
 }
 

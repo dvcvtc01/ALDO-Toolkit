@@ -11,6 +11,7 @@ import {
 import { config } from "./config.js";
 import { runMigrations } from "./db/migrate.js";
 import { authPlugin } from "./plugins/auth.js";
+import { closeJobQueue } from "./queue/jobs.js";
 import { routes } from "./routes/index.js";
 import { ensureDir } from "./utils/storage.js";
 
@@ -51,7 +52,7 @@ export const buildApp = async (
     openapi: {
       info: {
         title: "ALDO Toolkit API",
-        version: "0.3.0",
+        version: "0.4.0",
         description: "Azure Local DisconnectedOps Toolkit API"
       },
       tags: [
@@ -60,7 +61,8 @@ export const buildApp = async (
         { name: "projects" },
         { name: "validations" },
         { name: "exports" },
-        { name: "runs" }
+        { name: "runs" },
+        { name: "support-bundles" }
       ]
     },
     transform: jsonSchemaTransform
@@ -79,6 +81,10 @@ export const buildApp = async (
     if (!bootstrap.skipMigrations) {
       await runMigrations(app.log);
     }
+  });
+
+  app.addHook("onClose", async () => {
+    await closeJobQueue();
   });
 
   return app;

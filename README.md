@@ -54,7 +54,7 @@ Azure Local DisconnectedOps Toolkit for repeatable planning, acquisition validat
    - Tick `Bootstrap first Admin (only when no users exist)`.
    - Select `Bootstrap Admin`.
 
-## First Demo Workflow (Runner-First)
+## First Demo Workflow (Runner-First + Support Bundle)
 1. Create demo artifact file on the runner host:
 ```powershell
 New-Item -ItemType Directory -Path C:\aldo-demo\artifacts\payload -Force | Out-Null
@@ -94,6 +94,20 @@ $hash
 7. In **Exports**:
    - Select `Generate Export`.
    - Confirm `Runbook.md` and `validation-report.json` are generated with latest envcheck summary.
+8. In **Exports**:
+   - Select `Generate Support Bundle`.
+   - Wait for bundle status `ready`.
+   - Select `Download` and verify ZIP contains:
+     - `bundle-metadata.json`, `manifest.json`, `checksums.txt`
+     - `project/project.json`
+     - `exports/Runbook.md`, `exports/validation-report.json`
+     - latest completed runs under `runs/<type>/<runId>/`.
+
+## Automated Smoke Script
+Run an API-level smoke flow (bootstrap/login, create project, seed `acquire_scan` + `netcheck`, generate/download support bundle):
+```powershell
+.\docker\smoke-support-bundle.ps1
+```
 
 ## Runner CLI Examples
 ```powershell
@@ -106,6 +120,7 @@ Notes:
 - No Windows path needs to be mounted into Docker for acquisition validation.
 - Network check results reflect the runner host network, not the API container network.
 - Runner can create runs itself, but the recommended flow is requesting runs from UI and executing the generated command.
+- Support bundles include parsed metadata/results only (no secrets, no private keys, no uploaded certificate bundles).
 
 ## OpenAPI Type Generation
 ```bash

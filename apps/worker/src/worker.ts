@@ -2,6 +2,8 @@ import { Worker } from "bullmq";
 import pino from "pino";
 
 import { workerConfig } from "./config.js";
+import { processSupportBundleBuildJob } from "./support-bundle/job.js";
+import { closeWorkerDb } from "./support-bundle/repository.js";
 
 const logger = pino({
   level: process.env.NODE_ENV === "production" ? "info" : "debug"
@@ -21,6 +23,16 @@ const worker = new Worker(
     );
 
     switch (job.name) {
+      case "support_bundle_build":
+        if (
+          !job.data ||
+          typeof job.data !== "object" ||
+          !("bundleId" in job.data) ||
+          typeof (job.data as { bundleId?: unknown }).bundleId !== "string"
+        ) {
+          throw new Error("support_bundle_build requires a string bundleId in job data.");
+        }
+        return processSupportBundleBuildJob((job.data as { bundleId: string }).bundleId, logger);
       case "evidence.collection.placeholder":
         return {
           status: "completed",
@@ -53,6 +65,7 @@ worker.on("failed", (job, error) => {
 
 const shutdown = async (): Promise<void> => {
   await worker.close();
+  await closeWorkerDb();
   process.exit(0);
 };
 

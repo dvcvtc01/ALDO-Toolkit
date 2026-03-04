@@ -1,5 +1,6 @@
 ﻿import { randomUUID } from "node:crypto";
-import { createWriteStream } from "node:fs";
+import { createReadStream, createWriteStream } from "node:fs";
+import fs from "node:fs/promises";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 
@@ -25,10 +26,12 @@ import {
   countUsers,
   createProject,
   createRun,
+  createSupportBundle,
   createUser,
   deleteProject,
   getProjectById,
   getRunById,
+  getSupportBundleById,
   getUserById,
   getUserByUsername,
   insertExportRecord,
@@ -36,11 +39,14 @@ import {
   listExports,
   listProjects,
   listRunsByProject,
+  listSupportBundlesByProject,
   listUsers,
   listValidationRecords,
   submitRunEvidence,
+  updateSupportBundleStatus,
   updateProject
 } from "../db/repositories.js";
+import { enqueueSupportBundleBuild } from "../queue/jobs.js";
 import { buildRunbookMarkdown, buildValidationReport } from "../services/export-builder.js";
 import { calculateProjectHealth } from "../services/project-health.js";
 import { parseCertificateBundle } from "../utils/certificates.js";
@@ -53,6 +59,10 @@ const projectIdParamsSchema = z.object({
 
 const runIdParamsSchema = z.object({
   runId: z.string().uuid()
+});
+
+const bundleIdParamsSchema = z.object({
+  bundleId: z.string().uuid()
 });
 
 const runsQuerySchema = z.object({
@@ -575,6 +585,120 @@ export const routes: FastifyPluginCallback = (app, _opts, done) => {
   );
 
   app.post(
+    "/projects/:projectId/support-bundles",
+    {
+      preHandler: [app.requireRole(["Admin", "Operator"])],
+      schema: {
+        tags: ["support-bundles"],
+        params: projectIdParamsSchema
+      }
+    },
+    async (request, reply) => {
+      const { projectId } = projectIdParamsSchema.parse(request.params);
+      const project = await getProjectById(projectId);
+      if (!project) {
+        return reply.code(404).send({ message: "Project not found." });
+      }
+
+      const bundle = await createSupportBundle(projectId, request.user.userId);
+
+      try {
+        await enqueueSupportBundleBuild(bundle.id);
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : "Unable to enqueue support bundle job.";
+        await updateSupportBundleStatus(bundle.id, {
+          status: "failed",
+          finishedAt: new Date().toISOString(),
+          error: errorMessage
+        });
+        return reply.code(500).send({ message: errorMessage });
+      }
+
+      return bundle;
+    }
+  );
+
+  app.get(
+    "/projects/:projectId/support-bundles",
+    {
+      preHandler: [app.requireRole(["Admin", "Operator", "Viewer"])],
+      schema: {
+        tags: ["support-bundles"],
+        params: projectIdParamsSchema
+      }
+    },
+    async (request, reply) => {
+      const { projectId } = projectIdParamsSchema.parse(request.params);
+      const project = await getProjectById(projectId);
+      if (!project) {
+        return reply.code(404).send({ message: "Project not found." });
+      }
+
+      const bundles = await listSupportBundlesByProject(projectId);
+      return bundles.map((bundle) => ({
+        ...bundle,
+        filePath: bundle.filePath ? path.basename(bundle.filePath) : null
+      }));
+    }
+  );
+
+  app.get(
+    "/support-bundles/:bundleId",
+    {
+      preHandler: [app.requireRole(["Admin", "Operator", "Viewer"])],
+      schema: {
+        tags: ["support-bundles"],
+        params: bundleIdParamsSchema
+      }
+    },
+    async (request, reply) => {
+      const { bundleId } = bundleIdParamsSchema.parse(request.params);
+      const bundle = await getSupportBundleById(bundleId);
+      if (!bundle) {
+        return reply.code(404).send({ message: "Support bundle not found." });
+      }
+
+      return {
+        ...bundle,
+        filePath: bundle.filePath ? path.basename(bundle.filePath) : null
+      };
+    }
+  );
+
+  app.get(
+    "/support-bundles/:bundleId/download",
+    {
+      preHandler: [app.requireRole(["Admin", "Operator", "Viewer"])],
+      schema: {
+        tags: ["support-bundles"],
+        params: bundleIdParamsSchema
+      }
+    },
+    async (request, reply) => {
+      const { bundleId } = bundleIdParamsSchema.parse(request.params);
+      const bundle = await getSupportBundleById(bundleId);
+      if (!bundle) {
+        return reply.code(404).send({ message: "Support bundle not found." });
+      }
+
+      if (bundle.status !== "ready" || !bundle.filePath) {
+        return reply.code(409).send({ message: "Support bundle is not ready for download." });
+      }
+
+      try {
+        await fs.access(bundle.filePath);
+      } catch {
+        return reply.code(404).send({ message: "Support bundle file not found." });
+      }
+
+      const filename = `ALDO_SupportBundle_${bundle.projectId}_${bundle.id}.zip`;
+      reply.header("Content-Type", "application/zip");
+      reply.header("Content-Disposition", `attachment; filename="${filename}"`);
+      return reply.send(createReadStream(bundle.filePath));
+    }
+  );
+
+  app.post(
     "/projects/:projectId/runs",
     {
       preHandler: [app.requireRole(["Admin", "Operator"])],
@@ -664,6 +788,8 @@ export const routes: FastifyPluginCallback = (app, _opts, done) => {
           ? "runner_acquire_scan"
           : existing.type === "netcheck"
             ? "runner_netcheck"
+            : existing.type === "pki_validate"
+              ? "runner_pki_validate"
             : "runner_envcheck",
         request.user.userId,
         {

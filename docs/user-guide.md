@@ -57,7 +57,22 @@
    - `validation-report.json`
    - latest envcheck summary + artifact metadata
 
-## 7. Runner Commands
+## 7. Generate Support Bundle v1
+1. Open **Exports**.
+2. Select **Generate Support Bundle**.
+3. Wait for status to become `ready` in the bundle list.
+4. Select **Download** for the ready bundle.
+5. Confirm ZIP contains:
+   - `bundle-metadata.json`
+   - `manifest.json`
+   - `checksums.txt`
+   - `project/project.json`
+   - `exports/Runbook.md`
+   - `exports/validation-report.json`
+   - latest completed runs under `runs/<type>/<runId>/`.
+6. Confirm bundle excludes private keys, secrets, and raw uploaded cert bundle files.
+
+## 8. Runner Commands
 Use runner from workstation/staging host:
 ```powershell
 .\runner\powershell\aldo-runner\aldo-runner.ps1 acquire scan --server http://localhost:4000 --project <project-id> --token <jwt> --root C:\artifacts --expectedPath payload\update.zip --expectedSha256 <sha256>

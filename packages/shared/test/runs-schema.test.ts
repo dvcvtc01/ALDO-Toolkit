@@ -7,13 +7,17 @@ describe("runs schema", () => {
     expect(runTypeSchema.parse("envcheck")).toBe("envcheck");
   });
 
+  it("accepts pki_validate run type", () => {
+    expect(runTypeSchema.parse("pki_validate")).toBe("pki_validate");
+  });
+
   it("accepts artifact metadata with filename", () => {
     const parsed = runEvidenceSchema.parse({
       status: "completed",
       executedBy: {
         hostname: "HOST01",
         username: "operator",
-        runnerVersion: "0.3.0"
+        runnerVersion: "0.4.0"
       },
       transcriptLines: [],
       resultJson: {

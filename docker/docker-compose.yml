@@ -46,9 +46,14 @@ services:
     command: npm run start -w apps/worker
     environment:
       NODE_ENV: production
+      DATABASE_URL: postgres://aldo:${POSTGRES_PASSWORD:-aldo}@postgres:5432/aldo
       REDIS_URL: redis://redis:6379
+      DATA_DIR: /workspace/.data
     depends_on:
+      - postgres
       - redis
+    volumes:
+      - aldo-api-data:/workspace/.data
 
   web:
     build:

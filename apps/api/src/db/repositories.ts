@@ -1,6 +1,13 @@
 import { randomUUID } from "node:crypto";
 
-import type { ProjectWizardInput, Role, RunStatus, RunType } from "@aldo/shared";
+import type {
+  ProjectWizardInput,
+  Role,
+  RunStatus,
+  RunType,
+  SupportBundleManifest,
+  SupportBundleStatus
+} from "@aldo/shared";
 import { type PoolClient } from "pg";
 
 import { pool } from "./client.js";
@@ -49,6 +56,21 @@ export type DbRun = {
   createdBy: string | null;
   createdAt: string;
   updatedAt: string;
+};
+
+export type DbSupportBundle = {
+  id: string;
+  projectId: string;
+  status: SupportBundleStatus;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  requestedByUserId: string | null;
+  filePath: string | null;
+  fileSize: number | null;
+  sha256: string | null;
+  manifestJson: SupportBundleManifest | null;
+  error: string | null;
 };
 
 const mapUser = (row: Record<string, unknown>): DbUser => ({
@@ -142,6 +164,38 @@ const mapRun = (row: Record<string, unknown>): DbRun => ({
   createdBy: typeof row.created_by === "string" ? row.created_by : null,
   createdAt: new Date(String(row.created_at)).toISOString(),
   updatedAt: new Date(String(row.updated_at)).toISOString()
+});
+
+const mapSupportBundle = (row: Record<string, unknown>): DbSupportBundle => ({
+  id: String(row.id),
+  projectId: String(row.project_id),
+  status: row.status as SupportBundleStatus,
+  createdAt: new Date(String(row.created_at)).toISOString(),
+  startedAt:
+    typeof row.started_at === "string" || row.started_at instanceof Date
+      ? new Date(row.started_at).toISOString()
+      : null,
+  finishedAt:
+    typeof row.finished_at === "string" || row.finished_at instanceof Date
+      ? new Date(row.finished_at).toISOString()
+      : null,
+  requestedByUserId: typeof row.requested_by_user_id === "string" ? row.requested_by_user_id : null,
+  filePath: typeof row.file_path === "string" ? row.file_path : null,
+  fileSize:
+    typeof row.file_size === "number"
+      ? Math.max(0, Math.floor(row.file_size))
+      : typeof row.file_size === "string"
+        ? (() => {
+            const parsed = Number.parseInt(row.file_size, 10);
+            return Number.isNaN(parsed) ? null : Math.max(0, parsed);
+          })()
+        : null,
+  sha256: typeof row.sha256 === "string" ? row.sha256 : null,
+  manifestJson:
+    typeof row.manifest_json === "object" && row.manifest_json
+      ? (row.manifest_json as SupportBundleManifest)
+      : null,
+  error: typeof row.error === "string" ? row.error : null
 });
 
 const exec = async <T>(
@@ -504,6 +558,105 @@ export const submitRunEvidence = async (
   }
 
   return mapRun(rows[0]!);
+};
+
+export const createSupportBundle = async (
+  projectId: string,
+  requestedByUserId: string | null
+): Promise<DbSupportBundle> => {
+  const id = randomUUID();
+  const rows = await exec<Record<string, unknown>>(
+    undefined,
+    `
+      INSERT INTO support_bundles (
+        id, project_id, status, requested_by_user_id
+      )
+      VALUES ($1, $2, 'queued', $3)
+      RETURNING *
+    `,
+    [id, projectId, requestedByUserId]
+  );
+  return mapSupportBundle(rows[0]!);
+};
+
+export const listSupportBundlesByProject = async (projectId: string): Promise<DbSupportBundle[]> => {
+  const rows = await exec<Record<string, unknown>>(
+    undefined,
+    `
+      SELECT *
+      FROM support_bundles
+      WHERE project_id = $1
+      ORDER BY created_at DESC
+    `,
+    [projectId]
+  );
+  return rows.map(mapSupportBundle);
+};
+
+export const getSupportBundleById = async (bundleId: string): Promise<DbSupportBundle | null> => {
+  const rows = await exec<Record<string, unknown>>(
+    undefined,
+    `
+      SELECT *
+      FROM support_bundles
+      WHERE id = $1
+      LIMIT 1
+    `,
+    [bundleId]
+  );
+  if (rows.length === 0) {
+    return null;
+  }
+  return mapSupportBundle(rows[0]!);
+};
+
+export const updateSupportBundleStatus = async (
+  bundleId: string,
+  payload: {
+    status: SupportBundleStatus;
+    startedAt?: string | null;
+    finishedAt?: string | null;
+    filePath?: string | null;
+    fileSize?: number | null;
+    sha256?: string | null;
+    manifestJson?: SupportBundleManifest | null;
+    error?: string | null;
+  }
+): Promise<DbSupportBundle | null> => {
+  const rows = await exec<Record<string, unknown>>(
+    undefined,
+    `
+      UPDATE support_bundles
+      SET
+        status = $2,
+        started_at = COALESCE($3::timestamptz, started_at),
+        finished_at = COALESCE($4::timestamptz, finished_at),
+        file_path = COALESCE($5, file_path),
+        file_size = COALESCE($6::bigint, file_size),
+        sha256 = COALESCE($7, sha256),
+        manifest_json = COALESCE($8::jsonb, manifest_json),
+        error = $9
+      WHERE id = $1
+      RETURNING *
+    `,
+    [
+      bundleId,
+      payload.status,
+      payload.startedAt ?? null,
+      payload.finishedAt ?? null,
+      payload.filePath ?? null,
+      payload.fileSize ?? null,
+      payload.sha256 ?? null,
+      payload.manifestJson ? JSON.stringify(payload.manifestJson) : null,
+      payload.error ?? null
+    ]
+  );
+
+  if (rows.length === 0) {
+    return null;
+  }
+
+  return mapSupportBundle(rows[0]!);
 };
 
 export const insertRunLog = async (

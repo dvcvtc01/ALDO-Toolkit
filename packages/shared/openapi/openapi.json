@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "ALDO Toolkit API",
-    "version": "0.3.0",
+    "version": "0.4.0",
     "description": "Azure Local DisconnectedOps Toolkit API"
   },
   "components": {
@@ -585,6 +585,96 @@
         }
       }
     },
+    "/api/v1/projects/{projectId}/support-bundles": {
+      "post": {
+        "tags": [
+          "support-bundles"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "projectId",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "support-bundles"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "projectId",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/api/v1/support-bundles/{bundleId}": {
+      "get": {
+        "tags": [
+          "support-bundles"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "bundleId",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/api/v1/support-bundles/{bundleId}/download": {
+      "get": {
+        "tags": [
+          "support-bundles"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "bundleId",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
     "/api/v1/projects/{projectId}/runs": {
       "post": {
         "tags": [
@@ -602,6 +692,7 @@
                     "enum": [
                       "acquire_scan",
                       "netcheck",
+                      "pki_validate",
                       "envcheck"
                     ]
                   },
@@ -647,6 +738,7 @@
               "enum": [
                 "acquire_scan",
                 "netcheck",
+                "pki_validate",
                 "envcheck"
               ]
             },
@@ -863,6 +955,9 @@
     },
     {
       "name": "runs"
+    },
+    {
+      "name": "support-bundles"
     }
   ]
 }

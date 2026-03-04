@@ -57,8 +57,9 @@ export type ProjectPayload = {
   notes?: string;
 };
 
-export type RunType = "acquire_scan" | "netcheck" | "envcheck";
+export type RunType = "acquire_scan" | "netcheck" | "pki_validate" | "envcheck";
 export type RunStatus = "requested" | "in_progress" | "completed" | "failed";
+export type SupportBundleStatus = "queued" | "building" | "ready" | "failed";
 
 export type RunRecord = {
   id: string;
@@ -86,6 +87,29 @@ export type RunRecord = {
   createdBy: string | null;
   createdAt: string;
   updatedAt: string;
+};
+
+export type SupportBundleRecord = {
+  id: string;
+  projectId: string;
+  status: SupportBundleStatus;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  requestedByUserId: string | null;
+  filePath: string | null;
+  fileSize: number | null;
+  sha256: string | null;
+  manifestJson: {
+    formatVersion: "1.0";
+    generatedAtUtc: string;
+    files: Array<{
+      path: string;
+      sha256: string;
+      sizeBytes: number;
+    }>;
+  } | null;
+  error: string | null;
 };
 
 type RequestOptions = {
@@ -268,5 +292,78 @@ export const runsApi = {
       }
     });
     return unwrap<RunRecord>(result, "Unable to load run");
+  }
+};
+
+const parseFilenameFromDisposition = (headerValue: string | null): string | null => {
+  if (!headerValue) {
+    return null;
+  }
+
+  const utf8Match = headerValue.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    return decodeURIComponent(utf8Match[1]);
+  }
+
+  const plainMatch = headerValue.match(/filename="?([^";]+)"?/i);
+  return plainMatch?.[1] ?? null;
+};
+
+export const supportBundlesApi = {
+  create: async (token: string, projectId: string): Promise<SupportBundleRecord> => {
+    const client = getClient({ token });
+    const result = await client.POST("/api/v1/projects/{projectId}/support-bundles", {
+      params: {
+        path: { projectId }
+      }
+    });
+    return unwrap<SupportBundleRecord>(result, "Unable to request support bundle");
+  },
+  list: async (token: string, projectId: string): Promise<SupportBundleRecord[]> => {
+    const client = getClient({ token });
+    const result = await client.GET("/api/v1/projects/{projectId}/support-bundles", {
+      params: {
+        path: { projectId }
+      }
+    });
+    return unwrap<SupportBundleRecord[]>(result, "Unable to load support bundles");
+  },
+  get: async (token: string, bundleId: string): Promise<SupportBundleRecord> => {
+    const client = getClient({ token });
+    const result = await client.GET("/api/v1/support-bundles/{bundleId}", {
+      params: {
+        path: { bundleId }
+      }
+    });
+    return unwrap<SupportBundleRecord>(result, "Unable to load support bundle details");
+  },
+  download: async (
+    token: string,
+    bundleId: string
+  ): Promise<{
+    blob: Blob;
+    filename: string;
+  }> => {
+    const response = await fetch(`${API_BASE_URL}/api/v1/support-bundles/${bundleId}/download`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(text || "Unable to download support bundle");
+    }
+
+    const blob = await response.blob();
+    const filename =
+      parseFilenameFromDisposition(response.headers.get("content-disposition")) ??
+      `ALDO_SupportBundle_${bundleId}.zip`;
+
+    return {
+      blob,
+      filename
+    };
   }
 };

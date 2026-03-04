@@ -37,7 +37,7 @@ const createEnvcheckRun = (): DbRun => ({
   executedBy: {
     hostname: "HOST01",
     username: "operator",
-    runnerVersion: "0.3.0"
+    runnerVersion: "0.4.0"
   },
   transcriptText: "sample transcript",
   transcriptLines: [],
