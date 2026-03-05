@@ -66,7 +66,7 @@ function New-CompletedRun {
     executedBy = @{
       hostname = "SMOKEHOST"
       username = "smoke-admin"
-      runnerVersion = "0.4.0"
+      runnerVersion = "0.5.0"
     }
     transcriptText = $TranscriptText
     transcriptLines = @(@{
@@ -112,6 +112,9 @@ $netcheckRunId = New-CompletedRun -Type "netcheck" -RequestJson @{
       })
 } -TranscriptText "netcheck transcript"
 
+$policyEvaluation = Invoke-RestMethod -Method Post -Uri "$base/projects/$projectId/policy-evaluations" -Headers @{ Authorization = "Bearer $token" } -ContentType "application/json" -Body "{}"
+$policyEvaluationId = $policyEvaluation.id
+
 $bundle = Invoke-RestMethod -Method Post -Uri "$base/projects/$projectId/support-bundles" -Headers @{ Authorization = "Bearer $token" } -ContentType "application/json" -Body "{}"
 $bundleId = $bundle.id
 
@@ -146,6 +149,7 @@ $archive.Dispose()
 "PROJECT_ID=$projectId"
 "ACQUIRE_RUN_ID=$acquireRunId"
 "NETCHECK_RUN_ID=$netcheckRunId"
+"POLICY_EVALUATION_ID=$policyEvaluationId"
 "BUNDLE_ID=$bundleId"
 "ZIP_PATH=$downloadPath"
 "BUNDLE_STATUS=$($ready.status)"

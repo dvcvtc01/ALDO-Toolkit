@@ -82,6 +82,16 @@ const statements = [
     manifest_json JSONB,
     error TEXT
   );`,
+  `CREATE TABLE IF NOT EXISTS policy_evaluations (
+    id UUID PRIMARY KEY,
+    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    pack_id TEXT NOT NULL,
+    pack_version TEXT NOT NULL,
+    overall_status TEXT NOT NULL CHECK (overall_status IN ('pass', 'warn', 'fail')),
+    evaluation_json JSONB NOT NULL,
+    created_by UUID REFERENCES users(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );`,
   `CREATE INDEX IF NOT EXISTS idx_projects_owner ON projects(owner_user_id);`,
   `CREATE INDEX IF NOT EXISTS idx_validation_records_project ON validation_records(project_id, validation_type);`,
   `CREATE INDEX IF NOT EXISTS idx_run_logs_project ON run_logs(project_id);`,
@@ -89,6 +99,8 @@ const statements = [
   `CREATE INDEX IF NOT EXISTS idx_runs_type_status ON runs(type, status);`,
   `CREATE INDEX IF NOT EXISTS idx_support_bundles_project ON support_bundles(project_id, created_at DESC);`,
   `CREATE INDEX IF NOT EXISTS idx_support_bundles_status ON support_bundles(status, created_at DESC);`,
+  `CREATE INDEX IF NOT EXISTS idx_policy_evaluations_project ON policy_evaluations(project_id, created_at DESC);`,
+  `CREATE INDEX IF NOT EXISTS idx_policy_evaluations_status ON policy_evaluations(overall_status, created_at DESC);`,
   `DO $$
 BEGIN
   IF EXISTS (
@@ -101,6 +113,20 @@ BEGIN
     ALTER TABLE runs
       ADD CONSTRAINT runs_type_check
       CHECK (type IN ('acquire_scan', 'netcheck', 'pki_validate', 'envcheck'));
+  END IF;
+END $$;`,
+  `DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.tables
+    WHERE table_schema = 'public'
+      AND table_name = 'policy_evaluations'
+  ) THEN
+    ALTER TABLE policy_evaluations DROP CONSTRAINT IF EXISTS policy_evaluations_overall_status_check;
+    ALTER TABLE policy_evaluations
+      ADD CONSTRAINT policy_evaluations_overall_status_check
+      CHECK (overall_status IN ('pass', 'warn', 'fail'));
   END IF;
 END $$;`,
   `DO $$

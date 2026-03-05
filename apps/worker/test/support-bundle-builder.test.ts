@@ -114,7 +114,7 @@ describe("buildSupportBundle", () => {
       runbookMarkdown: "# Runbook",
       validationReport: { schemaVersion: "1.0" },
       generatedAtUtc: "2026-03-04T10:00:00.000Z",
-      aldoVersion: "0.4.0",
+      aldoVersion: "0.5.0",
       outputBaseDir: tempDir
     });
 

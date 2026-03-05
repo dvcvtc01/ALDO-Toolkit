@@ -60,6 +60,9 @@ export type ProjectPayload = {
 export type RunType = "acquire_scan" | "netcheck" | "pki_validate" | "envcheck";
 export type RunStatus = "requested" | "in_progress" | "completed" | "failed";
 export type SupportBundleStatus = "queued" | "building" | "ready" | "failed";
+export type PolicyRuleSeverity = "critical" | "warning" | "info";
+export type PolicyCheckStatus = "pass" | "warn" | "fail" | "not_applicable";
+export type PolicyOverallStatus = "pass" | "warn" | "fail";
 
 export type RunRecord = {
   id: string;
@@ -110,6 +113,62 @@ export type SupportBundleRecord = {
     }>;
   } | null;
   error: string | null;
+};
+
+export type PolicyPack = {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  rules: Array<{
+    key:
+      | "PROJECT_VALIDATION_PASSED"
+      | "ACQUISITION_PREREQUISITES_CONFIRMED"
+      | "RUN_ACQUIRE_SCAN_COMPLETED"
+      | "RUN_NETCHECK_COMPLETED"
+      | "RUN_PKI_VALIDATE_COMPLETED"
+      | "RUN_ENVCHECK_COMPLETED";
+    label: string;
+    description: string;
+    severity: PolicyRuleSeverity;
+    required: boolean;
+    enabled: boolean;
+  }>;
+};
+
+export type PolicyEvaluationRecord = {
+  id: string;
+  projectId: string;
+  packId: string;
+  packVersion: string;
+  overallStatus: PolicyOverallStatus;
+  evaluation: {
+    packId: string;
+    packVersion: string;
+    evaluatedAt: string;
+    overallStatus: PolicyOverallStatus;
+    summary: {
+      total: number;
+      passCount: number;
+      warnCount: number;
+      failCount: number;
+    };
+    checks: Array<{
+      key:
+        | "PROJECT_VALIDATION_PASSED"
+        | "ACQUISITION_PREREQUISITES_CONFIRMED"
+        | "RUN_ACQUIRE_SCAN_COMPLETED"
+        | "RUN_NETCHECK_COMPLETED"
+        | "RUN_PKI_VALIDATE_COMPLETED"
+        | "RUN_ENVCHECK_COMPLETED";
+      status: PolicyCheckStatus;
+      severity: PolicyRuleSeverity;
+      message: string;
+      evidence?: Record<string, unknown>;
+    }>;
+  };
+  createdBy: string | null;
+  createdAt: string;
 };
 
 type RequestOptions = {
@@ -365,5 +424,49 @@ export const supportBundlesApi = {
       blob,
       filename
     };
+  }
+};
+
+export const policyApi = {
+  listPacks: async (token: string): Promise<PolicyPack[]> => {
+    const client = getClient({ token });
+    const result = await client.GET("/api/v1/policy-packs");
+    return unwrap<PolicyPack[]>(result, "Unable to load policy packs");
+  },
+  evaluate: async (
+    token: string,
+    projectId: string,
+    payload: {
+      packId?: string;
+    } = {}
+  ): Promise<PolicyEvaluationRecord> => {
+    const client = getClient({ token });
+    const result = await client.POST("/api/v1/projects/{projectId}/policy-evaluations", {
+      params: {
+        path: { projectId }
+      },
+      body: {
+        ...(payload.packId ? { packId: payload.packId } : {})
+      }
+    });
+    return unwrap<PolicyEvaluationRecord>(result, "Unable to evaluate policy pack");
+  },
+  list: async (token: string, projectId: string): Promise<PolicyEvaluationRecord[]> => {
+    const client = getClient({ token });
+    const result = await client.GET("/api/v1/projects/{projectId}/policy-evaluations", {
+      params: {
+        path: { projectId }
+      }
+    });
+    return unwrap<PolicyEvaluationRecord[]>(result, "Unable to load policy evaluations");
+  },
+  latest: async (token: string, projectId: string): Promise<PolicyEvaluationRecord> => {
+    const client = getClient({ token });
+    const result = await client.GET("/api/v1/projects/{projectId}/policy-evaluations/latest", {
+      params: {
+        path: { projectId }
+      }
+    });
+    return unwrap<PolicyEvaluationRecord>(result, "Unable to load latest policy evaluation");
   }
 };

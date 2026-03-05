@@ -49,15 +49,23 @@
 5. Copy and execute the runner command on the execution host.
 6. Review summary (`Green`/`Amber`/`Red`) and top failures in **Checks** or **Runs**.
 
-## 6. Export Runbook and Report
+## 6. Evaluate Policy Gate
+1. Open **Policy**.
+2. Select policy pack (default: `baseline-disconnectedops-v1`).
+3. Select **Evaluate Policy**.
+4. Review overall status (`pass`/`warn`/`fail`) and rule-level checks.
+5. Open historical evaluations to compare changes over time.
+
+## 7. Export Runbook and Report
 1. Open **Exports**.
 2. Select **Generate Export**.
 3. Toolkit writes and records:
    - `Runbook.md`
    - `validation-report.json`
    - latest envcheck summary + artifact metadata
+   - latest policy evaluation summary
 
-## 7. Generate Support Bundle v1
+## 8. Generate Support Bundle v1
 1. Open **Exports**.
 2. Select **Generate Support Bundle**.
 3. Wait for status to become `ready` in the bundle list.
@@ -72,7 +80,7 @@
    - latest completed runs under `runs/<type>/<runId>/`.
 6. Confirm bundle excludes private keys, secrets, and raw uploaded cert bundle files.
 
-## 8. Runner Commands
+## 9. Runner Commands
 Use runner from workstation/staging host:
 ```powershell
 .\runner\powershell\aldo-runner\aldo-runner.ps1 acquire scan --server http://localhost:4000 --project <project-id> --token <jwt> --root C:\artifacts --expectedPath payload\update.zip --expectedSha256 <sha256>

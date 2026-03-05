@@ -1,4 +1,10 @@
-import type { ProjectWizardInput, RunType, SupportBundleManifest, SupportBundleStatus } from "@aldo/shared";
+import type {
+  PolicyEvaluation,
+  ProjectWizardInput,
+  RunType,
+  SupportBundleManifest,
+  SupportBundleStatus
+} from "@aldo/shared";
 import { Pool } from "pg";
 
 import { workerConfig } from "../config.js";
@@ -63,6 +69,17 @@ export type WorkerSupportBundle = {
   sha256: string | null;
   manifestJson: SupportBundleManifest | null;
   error: string | null;
+};
+
+export type WorkerPolicyEvaluation = {
+  id: string;
+  projectId: string;
+  packId: string;
+  packVersion: string;
+  overallStatus: "pass" | "warn" | "fail";
+  evaluation: PolicyEvaluation;
+  createdBy: string | null;
+  createdAt: string;
 };
 
 const toIso = (value: unknown): string => new Date(String(value)).toISOString();
@@ -179,6 +196,17 @@ const mapSupportBundle = (row: Record<string, unknown>): WorkerSupportBundle => 
   error: typeof row.error === "string" ? row.error : null
 });
 
+const mapPolicyEvaluation = (row: Record<string, unknown>): WorkerPolicyEvaluation => ({
+  id: String(row.id),
+  projectId: String(row.project_id),
+  packId: String(row.pack_id),
+  packVersion: String(row.pack_version),
+  overallStatus: row.overall_status as "pass" | "warn" | "fail",
+  evaluation: row.evaluation_json as PolicyEvaluation,
+  createdBy: typeof row.created_by === "string" ? row.created_by : null,
+  createdAt: toIso(row.created_at)
+});
+
 const queryRows = async <T extends Record<string, unknown>>(query: string, params: unknown[] = []) => {
   const result = await pool.query<T>(query, params);
   return result.rows;
@@ -280,6 +308,25 @@ export const markSupportBundleBuilding = async (
     return null;
   }
   return mapSupportBundle(rows[0]!);
+};
+
+export const getLatestPolicyEvaluation = async (
+  projectId: string
+): Promise<WorkerPolicyEvaluation | null> => {
+  const rows = await queryRows<Record<string, unknown>>(
+    `
+      SELECT *
+      FROM policy_evaluations
+      WHERE project_id = $1
+      ORDER BY created_at DESC
+      LIMIT 1
+    `,
+    [projectId]
+  );
+  if (rows.length === 0) {
+    return null;
+  }
+  return mapPolicyEvaluation(rows[0]!);
 };
 
 export const markSupportBundleReady = async (

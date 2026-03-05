@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "ALDO Toolkit API",
-    "version": "0.4.0",
+    "version": "0.5.0",
     "description": "Azure Local DisconnectedOps Toolkit API"
   },
   "components": {
@@ -539,6 +539,102 @@
         }
       }
     },
+    "/api/v1/policy-packs": {
+      "get": {
+        "tags": [
+          "policies"
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{projectId}/policy-evaluations": {
+      "post": {
+        "tags": [
+          "policies"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "packId": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "projectId",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "policies"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "projectId",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{projectId}/policy-evaluations/latest": {
+      "get": {
+        "tags": [
+          "policies"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "projectId",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
     "/api/v1/projects/{projectId}/exports/generate": {
       "post": {
         "tags": [
@@ -949,6 +1045,9 @@
     },
     {
       "name": "validations"
+    },
+    {
+      "name": "policies"
     },
     {
       "name": "exports"

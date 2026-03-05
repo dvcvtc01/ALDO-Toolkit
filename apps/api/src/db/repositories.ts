@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import type {
+  PolicyEvaluation,
   ProjectWizardInput,
   Role,
   RunStatus,
@@ -71,6 +72,17 @@ export type DbSupportBundle = {
   sha256: string | null;
   manifestJson: SupportBundleManifest | null;
   error: string | null;
+};
+
+export type DbPolicyEvaluation = {
+  id: string;
+  projectId: string;
+  packId: string;
+  packVersion: string;
+  overallStatus: "pass" | "warn" | "fail";
+  evaluation: PolicyEvaluation;
+  createdBy: string | null;
+  createdAt: string;
 };
 
 const mapUser = (row: Record<string, unknown>): DbUser => ({
@@ -196,6 +208,17 @@ const mapSupportBundle = (row: Record<string, unknown>): DbSupportBundle => ({
       ? (row.manifest_json as SupportBundleManifest)
       : null,
   error: typeof row.error === "string" ? row.error : null
+});
+
+const mapPolicyEvaluation = (row: Record<string, unknown>): DbPolicyEvaluation => ({
+  id: String(row.id),
+  projectId: String(row.project_id),
+  packId: String(row.pack_id),
+  packVersion: String(row.pack_version),
+  overallStatus: row.overall_status as "pass" | "warn" | "fail",
+  evaluation: row.evaluation_json as PolicyEvaluation,
+  createdBy: typeof row.created_by === "string" ? row.created_by : null,
+  createdAt: new Date(String(row.created_at)).toISOString()
 });
 
 const exec = async <T>(
@@ -675,6 +698,66 @@ export const insertRunLog = async (
     [id, projectId, mode, JSON.stringify(payload), JSON.stringify(supportBundle)]
   );
   return id;
+};
+
+export const insertPolicyEvaluation = async (
+  projectId: string,
+  createdBy: string | null,
+  evaluation: PolicyEvaluation
+): Promise<DbPolicyEvaluation> => {
+  const id = randomUUID();
+  const rows = await exec<Record<string, unknown>>(
+    undefined,
+    `
+      INSERT INTO policy_evaluations (
+        id, project_id, pack_id, pack_version, overall_status, evaluation_json, created_by
+      )
+      VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
+      RETURNING *
+    `,
+    [
+      id,
+      projectId,
+      evaluation.packId,
+      evaluation.packVersion,
+      evaluation.overallStatus,
+      JSON.stringify(evaluation),
+      createdBy
+    ]
+  );
+  return mapPolicyEvaluation(rows[0]!);
+};
+
+export const listPolicyEvaluations = async (projectId: string): Promise<DbPolicyEvaluation[]> => {
+  const rows = await exec<Record<string, unknown>>(
+    undefined,
+    `
+      SELECT *
+      FROM policy_evaluations
+      WHERE project_id = $1
+      ORDER BY created_at DESC
+    `,
+    [projectId]
+  );
+  return rows.map(mapPolicyEvaluation);
+};
+
+export const getLatestPolicyEvaluation = async (projectId: string): Promise<DbPolicyEvaluation | null> => {
+  const rows = await exec<Record<string, unknown>>(
+    undefined,
+    `
+      SELECT *
+      FROM policy_evaluations
+      WHERE project_id = $1
+      ORDER BY created_at DESC
+      LIMIT 1
+    `,
+    [projectId]
+  );
+  if (rows.length === 0) {
+    return null;
+  }
+  return mapPolicyEvaluation(rows[0]!);
 };
 
 export const listRunLogs = async (projectId: string): Promise<

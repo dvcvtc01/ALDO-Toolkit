@@ -1,6 +1,6 @@
 @{
     RootModule = 'Aldo.Runner.psm1'
-    ModuleVersion = '0.4.0'
+    ModuleVersion = '0.5.0'
     GUID = '87f0906d-6fb7-48e8-88b9-cc1e777274e1'
     Author = 'ALDO Toolkit Contributors'
     CompanyName = 'Open Source'

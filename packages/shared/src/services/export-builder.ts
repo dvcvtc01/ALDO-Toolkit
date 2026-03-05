@@ -33,6 +33,23 @@ export type ExportRunInput = {
   artifacts: ExportRunArtifact[];
 };
 
+export type ExportPolicyEvaluationInput = {
+  id: string;
+  createdAt: string;
+  packId: string;
+  packVersion: string;
+  overallStatus: "pass" | "warn" | "fail";
+  evaluation: {
+    evaluatedAt: string;
+    summary: {
+      total: number;
+      passCount: number;
+      warnCount: number;
+      failCount: number;
+    };
+  };
+};
+
 const parseOverallState = (value: unknown): "Green" | "Amber" | "Red" | "Unknown" => {
   if (typeof value !== "string") {
     return "Unknown";
@@ -133,7 +150,8 @@ export const buildRunbookMarkdown = (
   project: ExportProjectInput,
   validations: ExportValidationRecord[],
   generatedAt: string,
-  latestEnvcheckRun: ExportRunInput | null = null
+  latestEnvcheckRun: ExportRunInput | null = null,
+  latestPolicyEvaluation: ExportPolicyEvaluationInput | null = null
 ): string => {
   const envcheck = summarizeEnvcheckRun(latestEnvcheckRun);
   const sectionLines = validations.map((validation, index) => {
@@ -170,6 +188,18 @@ export const buildRunbookMarkdown = (
     "## Validation Records",
     ...(sectionLines.length > 0 ? sectionLines : ["No validation records have been captured yet."]),
     "",
+    "## Policy Gate (Latest)",
+    `- Available: ${latestPolicyEvaluation ? "yes" : "no"}`,
+    `- Evaluation ID: ${latestPolicyEvaluation?.id ?? "n/a"}`,
+    `- Pack: ${latestPolicyEvaluation ? `${latestPolicyEvaluation.packId} (${latestPolicyEvaluation.packVersion})` : "n/a"}`,
+    `- Evaluated At: ${latestPolicyEvaluation?.evaluation.evaluatedAt ?? "n/a"}`,
+    `- Overall Status: ${latestPolicyEvaluation?.overallStatus ?? "n/a"}`,
+    `- Summary: ${
+      latestPolicyEvaluation
+        ? `${latestPolicyEvaluation.evaluation.summary.passCount} pass / ${latestPolicyEvaluation.evaluation.summary.warnCount} warn / ${latestPolicyEvaluation.evaluation.summary.failCount} fail`
+        : "n/a"
+    }`,
+    "",
     "## Environment Checker (Latest)",
     `- Available: ${envcheck.available ? "yes" : "no"}`,
     `- Run ID: ${envcheck.runId ?? "n/a"}`,
@@ -201,7 +231,8 @@ export const buildValidationReport = (
   project: ExportProjectInput,
   validations: ExportValidationRecord[],
   generatedAt: string,
-  latestEnvcheckRun: ExportRunInput | null = null
+  latestEnvcheckRun: ExportRunInput | null = null,
+  latestPolicyEvaluation: ExportPolicyEvaluationInput | null = null
 ) => ({
   schemaVersion: "1.0",
   generatedAt,
@@ -211,6 +242,7 @@ export const buildValidationReport = (
     health: project.health,
     environmentType: project.config.environmentType
   },
+  policyEvaluation: latestPolicyEvaluation,
   envcheck: summarizeEnvcheckRun(latestEnvcheckRun),
   validations
 });

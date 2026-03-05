@@ -7,7 +7,12 @@ import { pipeline } from "node:stream/promises";
 import argon2 from "argon2";
 import {
   bootstrapAdminSchema,
+  DEFAULT_POLICY_PACK_ID,
+  evaluatePolicyPack,
+  getPolicyPackById,
+  listPolicyPacks,
   loginSchema,
+  policyEvaluationRequestSchema,
   pkiValidationRequestSchema,
   projectPatchSchema,
   projectWizardSchema,
@@ -15,6 +20,8 @@ import {
   runEvidenceSchema,
   runStatusSchema,
   runTypeSchema,
+  type RunStatus,
+  type RunType,
   userCreateSchema,
   validatePkiBundle,
   validateProjectWizard
@@ -31,12 +38,15 @@ import {
   deleteProject,
   getProjectById,
   getRunById,
+  getLatestPolicyEvaluation,
   getSupportBundleById,
   getUserById,
   getUserByUsername,
   insertExportRecord,
+  insertPolicyEvaluation,
   insertValidationRecord,
   listExports,
+  listPolicyEvaluations,
   listProjects,
   listRunsByProject,
   listSupportBundlesByProject,
@@ -97,6 +107,32 @@ const getMultipartFieldValue = (field: unknown): string | undefined => {
     return value.toString();
   }
   return undefined;
+};
+
+const toPolicyRunSnapshot = (
+  run: Awaited<ReturnType<typeof listRunsByProject>>[number] | undefined
+):
+  | {
+      id: string;
+      type: RunType;
+      status: RunStatus;
+      startedAt: string;
+      finishedAt: string | null;
+      requestJson: Record<string, unknown>;
+    }
+  | undefined => {
+  if (!run) {
+    return undefined;
+  }
+
+  return {
+    id: run.id,
+    type: run.type,
+    status: run.status,
+    startedAt: run.startedAt,
+    finishedAt: run.finishedAt,
+    requestJson: run.requestJson
+  };
 };
 
 export const routes: FastifyPluginCallback = (app, _opts, done) => {
@@ -518,6 +554,132 @@ export const routes: FastifyPluginCallback = (app, _opts, done) => {
     }
   );
 
+  app.get(
+    "/policy-packs",
+    {
+      preHandler: [app.requireRole(["Admin", "Operator", "Viewer"])],
+      schema: {
+        tags: ["policies"]
+      }
+    },
+    () => listPolicyPacks()
+  );
+
+  app.post(
+    "/projects/:projectId/policy-evaluations",
+    {
+      preHandler: [app.requireRole(["Admin", "Operator"])],
+      schema: {
+        tags: ["policies"],
+        params: projectIdParamsSchema,
+        body: policyEvaluationRequestSchema
+      }
+    },
+    async (request, reply) => {
+      const { projectId } = projectIdParamsSchema.parse(request.params);
+      const project = await getProjectById(projectId);
+      if (!project) {
+        return reply.code(404).send({ message: "Project not found." });
+      }
+
+      const payload = policyEvaluationRequestSchema.parse(request.body ?? {});
+      const selectedPolicyPackId = payload.packId ?? DEFAULT_POLICY_PACK_ID;
+      const policyPack = getPolicyPackById(selectedPolicyPackId);
+      if (!policyPack) {
+        return reply.code(400).send({ message: `Unknown policy pack: ${selectedPolicyPackId}.` });
+      }
+
+      const [acquireRuns, netcheckRuns, pkiRuns, envcheckRuns] = await Promise.all([
+        listRunsByProject(projectId, { type: "acquire_scan" }),
+        listRunsByProject(projectId, { type: "netcheck" }),
+        listRunsByProject(projectId, { type: "pki_validate" }),
+        listRunsByProject(projectId, { type: "envcheck" })
+      ]);
+
+      const latestRuns: Partial<
+        Record<
+          RunType,
+          {
+            id: string;
+            type: RunType;
+            status: RunStatus;
+            startedAt: string;
+            finishedAt: string | null;
+            requestJson: Record<string, unknown>;
+          }
+        >
+      > = {};
+
+      const latestAcquireRun = toPolicyRunSnapshot(acquireRuns[0]);
+      const latestNetcheckRun = toPolicyRunSnapshot(netcheckRuns[0]);
+      const latestPkiRun = toPolicyRunSnapshot(pkiRuns[0]);
+      const latestEnvcheckRun = toPolicyRunSnapshot(envcheckRuns[0]);
+
+      if (latestAcquireRun) {
+        latestRuns.acquire_scan = latestAcquireRun;
+      }
+      if (latestNetcheckRun) {
+        latestRuns.netcheck = latestNetcheckRun;
+      }
+      if (latestPkiRun) {
+        latestRuns.pki_validate = latestPkiRun;
+      }
+      if (latestEnvcheckRun) {
+        latestRuns.envcheck = latestEnvcheckRun;
+      }
+
+      const evaluation = evaluatePolicyPack(policyPack, {
+        evaluatedAt: new Date().toISOString(),
+        projectValidation: validateProjectWizard(project.config),
+        latestRuns
+      });
+
+      return insertPolicyEvaluation(projectId, request.user.userId, evaluation);
+    }
+  );
+
+  app.get(
+    "/projects/:projectId/policy-evaluations",
+    {
+      preHandler: [app.requireRole(["Admin", "Operator", "Viewer"])],
+      schema: {
+        tags: ["policies"],
+        params: projectIdParamsSchema
+      }
+    },
+    async (request, reply) => {
+      const { projectId } = projectIdParamsSchema.parse(request.params);
+      const project = await getProjectById(projectId);
+      if (!project) {
+        return reply.code(404).send({ message: "Project not found." });
+      }
+      return listPolicyEvaluations(projectId);
+    }
+  );
+
+  app.get(
+    "/projects/:projectId/policy-evaluations/latest",
+    {
+      preHandler: [app.requireRole(["Admin", "Operator", "Viewer"])],
+      schema: {
+        tags: ["policies"],
+        params: projectIdParamsSchema
+      }
+    },
+    async (request, reply) => {
+      const { projectId } = projectIdParamsSchema.parse(request.params);
+      const project = await getProjectById(projectId);
+      if (!project) {
+        return reply.code(404).send({ message: "Project not found." });
+      }
+      const latest = await getLatestPolicyEvaluation(projectId);
+      if (!latest) {
+        return reply.code(404).send({ message: "No policy evaluations found for this project." });
+      }
+      return latest;
+    }
+  );
+
   app.post(
     "/projects/:projectId/exports/generate",
     {
@@ -536,13 +698,26 @@ export const routes: FastifyPluginCallback = (app, _opts, done) => {
 
       const validations = await listValidationRecords(projectId);
       const envcheckRuns = await listRunsByProject(projectId, { type: "envcheck" });
+      const latestPolicyEvaluation = await getLatestPolicyEvaluation(projectId);
       const latestEnvcheckRun =
         envcheckRuns.find((run) => run.status === "completed" || run.status === "failed") ??
         envcheckRuns[0] ??
         null;
       const generatedAt = new Date().toISOString();
-      const runbook = buildRunbookMarkdown(project, validations, generatedAt, latestEnvcheckRun);
-      const report = buildValidationReport(project, validations, generatedAt, latestEnvcheckRun);
+      const runbook = buildRunbookMarkdown(
+        project,
+        validations,
+        generatedAt,
+        latestEnvcheckRun,
+        latestPolicyEvaluation
+      );
+      const report = buildValidationReport(
+        project,
+        validations,
+        generatedAt,
+        latestEnvcheckRun,
+        latestPolicyEvaluation
+      );
       const exportId = randomUUID();
 
       const exportDir = await ensureProjectSubdir(projectId, "exports");

@@ -4,8 +4,8 @@
 ALDO Toolkit is an open-source, self-hosted planner/validator/evidence system for Azure Local disconnected operations. It does not replace Microsoft control-plane actions. It reduces operator error by wrapping documented flows and preserving deterministic evidence.
 
 ## System Components
-- `apps/web` (Next.js + Fluent UI): wizard-led interface for planning, requesting runner-based acquisition/network/envcheck runs, PKI validation submission, exports, and run evidence views.
-- `apps/api` (Fastify + OpenAPI): auth, RBAC, project CRUD, validators, exports, run request lifecycle, and run evidence ingestion endpoints.
+- `apps/web` (Next.js + Fluent UI): wizard-led interface for planning, requesting runner-based acquisition/network/envcheck runs, PKI validation submission, policy gate evaluations, exports, and run evidence views.
+- `apps/api` (Fastify + OpenAPI): auth, RBAC, project CRUD, validators, policy evaluation, exports, run request lifecycle, and run evidence ingestion endpoints.
 - `apps/worker` (BullMQ): async processing skeleton for follow-on evidence and OperationsModule workflows.
 - `packages/shared` (zod + validators): shared data contracts and core validation logic.
 - `runner/powershell/aldo-runner`: workstation/staging-host execution runner for acquisition folder scanning, DNS/TCP checks, Environment Checker execution, and transcript posting.
@@ -30,6 +30,7 @@ ALDO Toolkit is an open-source, self-hosted planner/validator/evidence system fo
 - `acquisition_records`: legacy acquisition checklist payload history from initial MVP path.
 - `exports`: generated `Runbook.md` and `validation-report.json`.
 - `runs`: requested and executed runs (`acquire_scan`, `netcheck`, `pki_validate`, `envcheck`) with status, transcript, structured result JSON, execution host metadata, and artifact metadata.
+- `policy_evaluations`: auditable readiness-gate results by project and policy-pack version.
 - `support_bundles`: async bundle build records with queue/build status, output file metadata, deterministic manifest snapshot, and error state.
 
 ## Auditability
@@ -37,6 +38,7 @@ ALDO Toolkit is an open-source, self-hosted planner/validator/evidence system fo
 - Generated files are persisted to deterministic project paths under data volume.
 - Runner transcripts are preserved as text + structured line entries, with run result JSON and artifact metadata persisted per run.
 - Support bundles are generated asynchronously by worker jobs and stored on a shared local filesystem volume between API and worker.
+- Policy evaluations are persisted with pack/version snapshot for deterministic audit replay.
 
 ## Offline-First Behavior
 - Toolkit operates without internet post-install.
@@ -54,3 +56,4 @@ ALDO Toolkit is an open-source, self-hosted planner/validator/evidence system fo
 - Environment Checker module binaries are staged offline by operators; runner discovers/invokes checker commands from the provided module path.
 - Object storage backend is local filesystem volume for MVP; MinIO integration is future work.
 - For support bundle inclusion, only the latest completed run per type (`acquire_scan`, `netcheck`, `pki_validate`, `envcheck`) is packaged when present.
+- Policy packs are currently static and versioned in source; external policy-pack registry/import is planned for later milestones.

@@ -7,6 +7,7 @@ import type { Logger } from "pino";
 import { workerConfig } from "../config.js";
 import { buildSupportBundle } from "./builder.js";
 import {
+  getLatestPolicyEvaluation,
   getProjectById,
   getSupportBundleById,
   listLatestCompletedRunsByType,
@@ -61,16 +62,29 @@ export const processSupportBundleBuildJob = async (
       throw new Error(`Project ${bundle.projectId} was not found.`);
     }
 
-    const [validations, latestRuns, aldoVersion] = await Promise.all([
+    const [validations, latestRuns, latestPolicyEvaluation, aldoVersion] = await Promise.all([
       listValidationRecords(project.id),
       listLatestCompletedRunsByType(project.id, supportedRunTypesForBundle),
+      getLatestPolicyEvaluation(project.id),
       getAldoVersion()
     ]);
 
     const latestEnvcheckRun = latestRuns.find((run) => run.type === "envcheck") ?? null;
     const generatedAtUtc = new Date().toISOString();
-    const runbook = buildRunbookMarkdown(project, validations, generatedAtUtc, latestEnvcheckRun);
-    const validationReport = buildValidationReport(project, validations, generatedAtUtc, latestEnvcheckRun);
+    const runbook = buildRunbookMarkdown(
+      project,
+      validations,
+      generatedAtUtc,
+      latestEnvcheckRun,
+      latestPolicyEvaluation
+    );
+    const validationReport = buildValidationReport(
+      project,
+      validations,
+      generatedAtUtc,
+      latestEnvcheckRun,
+      latestPolicyEvaluation
+    );
 
     const outputBaseDir = path.join(workerConfig.DATA_DIR, "support-bundles", project.id, bundle.id);
     const builtBundle = await buildSupportBundle({

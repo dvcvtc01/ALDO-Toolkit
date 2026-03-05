@@ -6,7 +6,7 @@ function Get-RunnerVersion {
         return (Test-ModuleManifest -Path $manifestPath).Version.ToString()
     }
     catch {
-        return "0.4.0"
+        return "0.5.0"
     }
 }
 

@@ -21,6 +21,9 @@ import {
   type AuthUser,
   authApi,
   exportApi,
+  policyApi,
+  type PolicyEvaluationRecord,
+  type PolicyPack,
   type ProjectPayload,
   type ProjectRecord,
   type RunRecord,
@@ -34,9 +37,9 @@ import {
 } from "../lib/api-client";
 import { defaultWizardInput, type WizardProjectInput, validateWizard } from "../lib/wizard";
 
-type NavItem = "Overview" | "Plan" | "Acquire" | "PKI" | "Checks" | "Exports" | "Runs";
+type NavItem = "Overview" | "Plan" | "Acquire" | "PKI" | "Checks" | "Policy" | "Exports" | "Runs";
 
-const navItems: NavItem[] = ["Overview", "Plan", "Acquire", "PKI", "Checks", "Exports", "Runs"];
+const navItems: NavItem[] = ["Overview", "Plan", "Acquire", "PKI", "Checks", "Policy", "Exports", "Runs"];
 const wizardSteps = ["Basics", "Capacity", "Network", "Identity"];
 
 const tokenStorageKey = "aldo-token";
@@ -82,6 +85,10 @@ export const AldoDashboard = () => {
   const [pkiResult, setPkiResult] = useState<string>("");
 
   const [exportsResult, setExportsResult] = useState<string>("");
+  const [policyPacks, setPolicyPacks] = useState<PolicyPack[]>([]);
+  const [selectedPolicyPackId, setSelectedPolicyPackId] = useState<string>("baseline-disconnectedops-v1");
+  const [policyEvaluations, setPolicyEvaluations] = useState<PolicyEvaluationRecord[]>([]);
+  const [selectedPolicyEvaluation, setSelectedPolicyEvaluation] = useState<PolicyEvaluationRecord | null>(null);
   const [supportBundles, setSupportBundles] = useState<SupportBundleRecord[]>([]);
   const [selectedBundleDetail, setSelectedBundleDetail] = useState<SupportBundleRecord | null>(null);
   const [runsList, setRunsList] = useState<RunRecord[]>([]);
@@ -123,6 +130,14 @@ export const AldoDashboard = () => {
   const supportBundleStatusClass = (status: SupportBundleRecord["status"]): string => {
     if (status === "ready") return "tag-green";
     if (status === "failed") return "tag-red";
+    return "tag-amber";
+  };
+
+  const policyStatusClass = (
+    status: PolicyEvaluationRecord["overallStatus"] | "pass" | "warn" | "fail"
+  ): string => {
+    if (status === "pass") return "tag-green";
+    if (status === "fail") return "tag-red";
     return "tag-amber";
   };
 
@@ -189,6 +204,9 @@ export const AldoDashboard = () => {
     setUser(null);
     setProjects([]);
     setSelectedProjectId(null);
+    setPolicyPacks([]);
+    setPolicyEvaluations([]);
+    setSelectedPolicyEvaluation(null);
     setSupportBundles([]);
     setSelectedBundleDetail(null);
   };
@@ -204,6 +222,21 @@ export const AldoDashboard = () => {
     setSupportBundles(bundles);
     setSelectedBundleDetail((current) =>
       current ? bundles.find((bundle) => bundle.id === current.id) ?? null : null
+    );
+  };
+
+  const loadPolicyData = async (authToken: string, projectId: string): Promise<void> => {
+    const [packs, evaluations] = await Promise.all([
+      policyApi.listPacks(authToken),
+      policyApi.list(authToken, projectId)
+    ]);
+    setPolicyPacks(packs);
+    if (packs.length > 0 && !packs.some((pack) => pack.id === selectedPolicyPackId)) {
+      setSelectedPolicyPackId(packs[0]!.id);
+    }
+    setPolicyEvaluations(evaluations);
+    setSelectedPolicyEvaluation((current) =>
+      current ? evaluations.find((evaluation) => evaluation.id === current.id) ?? evaluations[0] ?? null : evaluations[0] ?? null
     );
   };
 
@@ -525,6 +558,24 @@ export const AldoDashboard = () => {
     }
   };
 
+  const requestPolicyEvaluation = async (): Promise<void> => {
+    if (!token || !selectedProjectId) return;
+    setBusy(true);
+    setStatusMessage("");
+    try {
+      const evaluation = await policyApi.evaluate(token, selectedProjectId, {
+        packId: selectedPolicyPackId
+      });
+      await loadPolicyData(token, selectedProjectId);
+      setSelectedPolicyEvaluation(evaluation);
+      setStatusMessage("Policy evaluation complete.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to evaluate policy pack.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const loadRuns = async (): Promise<void> => {
     if (!token || !selectedProjectId) return;
     setBusy(true);
@@ -643,6 +694,9 @@ export const AldoDashboard = () => {
       setAcquireLatestRun(null);
       setNetworkLatestRun(null);
       setEnvcheckLatestRun(null);
+      setPolicyPacks([]);
+      setPolicyEvaluations([]);
+      setSelectedPolicyEvaluation(null);
       setSupportBundles([]);
       setSelectedBundleDetail(null);
       setRunsList([]);
@@ -665,6 +719,10 @@ export const AldoDashboard = () => {
 
     void loadSupportBundles(token, selectedProjectId).catch(() => {
       setStatusMessage("Unable to load support bundles.");
+    });
+
+    void loadPolicyData(token, selectedProjectId).catch(() => {
+      setStatusMessage("Unable to load policy data.");
     });
   }, [token, selectedProjectId, runFilterType, runFilterStatus]);
 
@@ -1221,6 +1279,133 @@ export const AldoDashboard = () => {
                     </>
                   );
                 })()}
+              </div>
+            )}
+          </section>
+        )}
+
+        {activeNav === "Policy" && (
+          <section className="panel">
+            <h2>Policy Gate</h2>
+            <p>
+              Evaluate project readiness against versioned policy packs. Results are stored as auditable
+              policy-evaluation records.
+            </p>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "end" }}>
+              <Field label="Policy Pack">
+                <Select
+                  value={selectedPolicyPackId}
+                  onChange={(_, data) => setSelectedPolicyPackId(data.value)}
+                >
+                  {policyPacks.map((policyPack) => (
+                    <option key={policyPack.id} value={policyPack.id}>
+                      {policyPack.name} ({policyPack.version})
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Button appearance="primary" icon={<Play24Regular />} onClick={() => void requestPolicyEvaluation()}>
+                Evaluate Policy
+              </Button>
+              <Button
+                icon={<ArrowClockwise24Regular />}
+                onClick={() => token && selectedProjectId && void loadPolicyData(token, selectedProjectId)}
+              >
+                Refresh Policy Data
+              </Button>
+            </div>
+
+            {policyPacks.length === 0 ? (
+              <p style={{ marginTop: 12 }}>No policy packs available.</p>
+            ) : (
+              (() => {
+                const selectedPolicyPack =
+                  policyPacks.find((policyPack) => policyPack.id === selectedPolicyPackId) ?? policyPacks[0]!;
+                return (
+                  <div style={{ marginTop: 12 }}>
+                    <h3>{selectedPolicyPack.name}</h3>
+                    <p>{selectedPolicyPack.description}</p>
+                    <p>
+                      Rules: {selectedPolicyPack.rules.length} | Version: {selectedPolicyPack.version}
+                    </p>
+                  </div>
+                );
+              })()
+            )}
+
+            <h3 style={{ marginTop: 14 }}>Evaluations</h3>
+            {policyEvaluations.length === 0 ? (
+              <p>No policy evaluations yet for this project.</p>
+            ) : (
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr>
+                      <th align="left">Created</th>
+                      <th align="left">Pack</th>
+                      <th align="left">Status</th>
+                      <th align="left">Summary</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {policyEvaluations.map((evaluation) => (
+                      <tr
+                        key={evaluation.id}
+                        style={{
+                          cursor: "pointer",
+                          background:
+                            selectedPolicyEvaluation?.id === evaluation.id ? "#ecfeff" : "transparent"
+                        }}
+                        onClick={() => setSelectedPolicyEvaluation(evaluation)}
+                      >
+                        <td>{new Date(evaluation.createdAt).toLocaleString()}</td>
+                        <td>
+                          {evaluation.packId} ({evaluation.packVersion})
+                        </td>
+                        <td className={policyStatusClass(evaluation.overallStatus)}>
+                          {evaluation.overallStatus}
+                        </td>
+                        <td>
+                          {evaluation.evaluation.summary.passCount} pass /{" "}
+                          {evaluation.evaluation.summary.warnCount} warn /{" "}
+                          {evaluation.evaluation.summary.failCount} fail
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {selectedPolicyEvaluation && (
+              <div style={{ marginTop: 14 }}>
+                <h3>Evaluation Detail</h3>
+                <p>
+                  ID: <span className="monospace">{selectedPolicyEvaluation.id}</span>
+                </p>
+                <p>
+                  Evaluated At:{" "}
+                  {new Date(selectedPolicyEvaluation.evaluation.evaluatedAt).toLocaleString()} | Status:{" "}
+                  <span className={policyStatusClass(selectedPolicyEvaluation.overallStatus)}>
+                    {selectedPolicyEvaluation.overallStatus}
+                  </span>
+                </p>
+                <ul className="validation-list">
+                  {selectedPolicyEvaluation.evaluation.checks.map((check) => (
+                    <li
+                      key={`${selectedPolicyEvaluation.id}-${check.key}`}
+                      className={
+                        check.status === "pass"
+                          ? "tag-green"
+                          : check.status === "fail"
+                            ? "tag-red"
+                            : "tag-amber"
+                      }
+                    >
+                      {check.key}: {check.status} - {check.message}
+                    </li>
+                  ))}
+                </ul>
               </div>
             )}
           </section>

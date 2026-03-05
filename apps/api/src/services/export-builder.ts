@@ -1,12 +1,13 @@
 import {
   buildRunbookMarkdown as buildRunbookMarkdownShared,
   buildValidationReport as buildValidationReportShared,
+  type ExportPolicyEvaluationInput,
   type ExportProjectInput,
   type ExportRunInput,
   type ExportValidationRecord
 } from "@aldo/shared";
 
-import type { DbProject, DbRun } from "../db/repositories.js";
+import type { DbPolicyEvaluation, DbProject, DbRun } from "../db/repositories.js";
 
 type ValidationRecord = {
   id: string;
@@ -55,28 +56,52 @@ const toSharedRun = (run: DbRun | null): ExportRunInput | null => {
   };
 };
 
+const toSharedPolicyEvaluation = (
+  evaluation: DbPolicyEvaluation | null
+): ExportPolicyEvaluationInput | null => {
+  if (!evaluation) {
+    return null;
+  }
+
+  return {
+    id: evaluation.id,
+    createdAt: evaluation.createdAt,
+    packId: evaluation.packId,
+    packVersion: evaluation.packVersion,
+    overallStatus: evaluation.overallStatus,
+    evaluation: {
+      evaluatedAt: evaluation.evaluation.evaluatedAt,
+      summary: evaluation.evaluation.summary
+    }
+  };
+};
+
 export const buildRunbookMarkdown = (
   project: DbProject,
   validations: ValidationRecord[],
   generatedAt: string,
-  latestEnvcheckRun: DbRun | null = null
+  latestEnvcheckRun: DbRun | null = null,
+  latestPolicyEvaluation: DbPolicyEvaluation | null = null
 ): string =>
   buildRunbookMarkdownShared(
     toSharedProject(project),
     toSharedValidationRecords(validations),
     generatedAt,
-    toSharedRun(latestEnvcheckRun)
+    toSharedRun(latestEnvcheckRun),
+    toSharedPolicyEvaluation(latestPolicyEvaluation)
   );
 
 export const buildValidationReport = (
   project: DbProject,
   validations: ValidationRecord[],
   generatedAt: string,
-  latestEnvcheckRun: DbRun | null = null
+  latestEnvcheckRun: DbRun | null = null,
+  latestPolicyEvaluation: DbPolicyEvaluation | null = null
 ) =>
   buildValidationReportShared(
     toSharedProject(project),
     toSharedValidationRecords(validations),
     generatedAt,
-    toSharedRun(latestEnvcheckRun)
+    toSharedRun(latestEnvcheckRun),
+    toSharedPolicyEvaluation(latestPolicyEvaluation)
   );

@@ -14,6 +14,7 @@ Azure Local DisconnectedOps Toolkit for repeatable planning, acquisition validat
 ## MVP Features
 - Local auth (`argon2id`) + RBAC (`Admin`, `Operator`, `Viewer`).
 - Project Wizard with network/capacity constraints.
+- Versioned policy packs with auditable readiness gate evaluations.
 - Runner-first acquisition scan (`acquire_scan`) with artifact metadata + SHA256 evidence.
 - Runner-first network checks (`netcheck`) with DNS + TCP 443 reachability from execution host.
 - Runner-first Environment Checker execution (`envcheck`) with offline `modulePath` support.
@@ -91,10 +92,14 @@ $hash
 6. In **Runs**:
    - Verify runs exist for `acquire_scan`, `netcheck`, and `envcheck`.
    - Open each run and confirm transcript + structured results are present.
-7. In **Exports**:
-   - Select `Generate Export`.
-   - Confirm `Runbook.md` and `validation-report.json` are generated with latest envcheck summary.
+7. In **Policy**:
+   - Select policy pack `baseline-disconnectedops-v1`.
+   - Select `Evaluate Policy`.
+   - Confirm latest evaluation status and summary.
 8. In **Exports**:
+   - Select `Generate Export`.
+   - Confirm `Runbook.md` and `validation-report.json` are generated with latest envcheck + policy summary.
+9. In **Exports**:
    - Select `Generate Support Bundle`.
    - Wait for bundle status `ready`.
    - Select `Download` and verify ZIP contains:
@@ -104,7 +109,7 @@ $hash
      - latest completed runs under `runs/<type>/<runId>/`.
 
 ## Automated Smoke Script
-Run an API-level smoke flow (bootstrap/login, create project, seed `acquire_scan` + `netcheck`, generate/download support bundle):
+Run an API-level smoke flow (bootstrap/login, create project, seed `acquire_scan` + `netcheck`, evaluate policy, generate/download support bundle):
 ```powershell
 .\docker\smoke-support-bundle.ps1
 ```
@@ -129,6 +134,7 @@ npm run generate:openapi
 
 ## Docs
 - [Architecture](docs/architecture.md)
+- [Roadmap](docs/roadmap-v1.md)
 - [Threat Model](docs/threat-model.md)
 - [User Guide](docs/user-guide.md)
 - [Developer Guide](docs/dev-guide.md)
